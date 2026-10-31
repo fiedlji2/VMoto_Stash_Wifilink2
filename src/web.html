@@ -1,12 +1,16 @@
 <!doctype html>
-<html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vmoto WiFiLink</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--mut:#6b7385;--ok:#1a8f4c;--warn:#b7791f;--bad:#c0392b;--line:#e3e6ec}
 @media (prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d2128;--fg:#e6e9ef;--mut:#98a0b0;--line:#2c313a}}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
 main{max-width:980px;margin:0 auto;padding:16px}
-h1{font-size:20px;margin:4px 0 12px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:4px 0 12px}
+h1{font-size:20px;margin:0}
+.lang{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.lang button{border:0;border-radius:0;padding:4px 12px;background:var(--card)}
+.lang button.on{background:var(--ok);color:#fff}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 8px}
@@ -24,65 +28,116 @@ select{padding:4px 8px}
 button.primary{background:var(--ok);border-color:var(--ok);color:#fff}
 @media (max-width:560px){.ctl{grid-template-columns:120px 1fr 64px}}
 </style></head><body><main>
-<h1>Vmoto WiFiLink – stav</h1>
+<header><h1 data-t="title"></h1>
+ <div class="lang"><button id="l_en" type="button">EN</button><button id="l_cs" type="button">CS</button></div></header>
 <div class="grid">
- <div class="card"><h2>Stav</h2><div id="state" class="big">…</div><div id="maj" class="mut"></div></div>
- <div class="card"><h2>Displej</h2><dl id="disp"></dl></div>
- <div class="card"><h2>Přenos</h2><dl id="stream"></dl></div>
+ <div class="card"><h2 data-t="h_status"></h2><div id="state" class="big">…</div><div id="maj" class="mut"></div></div>
+ <div class="card"><h2 data-t="h_dash"></h2><dl id="disp"></dl></div>
+ <div class="card"><h2 data-t="h_stream"></h2><dl id="stream"></dl></div>
  <div class="card"><h2>WiFiLink</h2><dl id="dev"></dl></div>
 </div>
-<div class="card" id="cam"><h2>Kamera – změny se projeví hned na displeji</h2>
- <div class="mut" style="font-size:13px">Každá změna na okamžik přenastaví enkodér (obraz může krátce cuknout).
-  Bez Uložit platí jen do restartu.</div>
- <div id="ctls" class="mut">načítám…</div>
- <div class="btns"><button class="primary" id="save">Uložit</button><button id="defs">Výchozí hodnoty</button>
-  <button id="revert">Vrátit uložené</button><span id="cammsg" class="mut"></span></div>
+<div class="card" id="cam"><h2 data-t="h_camera"></h2>
+ <div class="mut" style="font-size:13px" data-t="cam_note"></div>
+ <div id="ctls" class="mut" data-t="loading"></div>
+ <div class="btns"><button class="primary" id="save" data-t="b_save"></button><button id="defs" data-t="b_defs"></button>
+  <button id="revert" data-t="b_revert"></button><span id="cammsg" class="mut"></span></div>
 </div>
 <pre id="log"></pre>
 <p class="mut" id="ts"></p>
 </main><script>
+const I18N={
+ en:{title:'Vmoto WiFiLink – status',h_status:'Status',h_dash:'Dash',h_stream:'Stream',h_camera:'Camera – changes apply live on the dash',
+  cam_note:'Every change briefly re-creates the encoder (the picture may jerk). Without Save it lasts until a restart.',
+  loading:'loading…',b_save:'Save',b_defs:'Defaults',b_revert:'Restore saved',
+  st_connected:'connected to dash',st_wifi:'Wi-Fi connected, waiting for dash',st_searching:'searching for dash',st_paused:'paused (DISABLE)',
+  majestic:'majestic (camera)',running:'running',not_running:'not running',
+  network:'network',channel:'channel',signal:'signal',rate:'link rate',connected:'connected',
+  taking:'dash takes',fps:'frames/s',empty:'empty replies',from_cam:'from camera (total)',dropped:'dropped (total)',
+  queue:'queue',frames:'frames',idr_only:'IDR frames only',no_data:'no data yet (10 s average)',
+  soc_temp:'SoC temperature',wifi_mod:'Wi-Fi module',approx:'approx.',exposure:'exposure',gain:'gain analog / digital',
+  load:'load',ram:'free RAM',of:'of',uptime:'uptime',yes:'yes',no:'no',
+  updated:'updated',no_resp:'WiFiLink not responding',saved:'saved',unsaved:'unsaved changes',error:'error',restarting:'restarting camera…',
+  m_saved:'saved – survives a restart',m_defaults:'default values (not saved)',m_reverted:'restored saved values',m_invalid_json:'invalid JSON',
+  hint_restart:'camera restart ~5 s, saved at once',hint_night:'not saved',
+  g_image:'Image',g_exposure:'Exposure',g_video:'Video',
+  'c_image.mirror':'Mirror (rear-view)','c_image.flip':'Flip upside down','c_image.luminance':'Brightness','c_image.contrast':'Contrast',
+  'c_image.saturation':'Saturation','c_image.hue':'Hue',c_night:'Black & white (night) mode',
+  'c_isp.exposure':'Max exposure','c_isp.antiFlicker':'Anti-flicker','c_isp.slowShutter':'Slow shutter in the dark',
+  'c_isp.aGain':'Sensor gain limit','c_isp.wdr':'WDR (experimental)',
+  'c_video0.bitrate':'Bitrate','c_video0.fps':'Frames per second','c_video0.gopSize':'I-frame every','c_video0.rcMode':'Rate control',
+  'c_video0.minQp':'Best quality (min QP)','c_video0.maxQp':'Worst quality (max QP)','c_video0.qpDelta':'I-frame quality offset (QP)',
+  o_disabled:'off',o_low:'low',o_medium:'medium',o_high:'high',o_off:'off',o_on:'on',
+  o_cbr:'constant (CBR)',o_vbr:'variable (VBR)',o_avbr:'adaptive (AVBR)'},
+ cs:{title:'Vmoto WiFiLink – stav',h_status:'Stav',h_dash:'Displej',h_stream:'Přenos',h_camera:'Kamera – změny se projeví hned na displeji',
+  cam_note:'Každá změna na okamžik přenastaví enkodér (obraz může krátce cuknout). Bez Uložit platí jen do restartu.',
+  loading:'načítám…',b_save:'Uložit',b_defs:'Výchozí hodnoty',b_revert:'Vrátit uložené',
+  st_connected:'připojeno k displeji',st_wifi:'Wi-Fi připojeno, čeká na displej',st_searching:'hledá displej',st_paused:'pozastaveno (DISABLE)',
+  majestic:'majestic (kamera)',running:'běží',not_running:'neběží',
+  network:'síť',channel:'kanál',signal:'signál',rate:'rychlost',connected:'připojeno',
+  taking:'displej bere',fps:'snímků/s',empty:'prázdných odpovědí',from_cam:'z kamery celkem',dropped:'zahozeno celkem',
+  queue:'fronta',frames:'snímku',idr_only:'jen úplné snímky',no_data:'zatím bez dat (průměr za 10 s)',
+  soc_temp:'teplota čipu',wifi_mod:'Wi-Fi modul',approx:'orientačně',exposure:'expozice',gain:'zesílení analog / digitál',
+  load:'zátěž',ram:'volná RAM',of:'z',uptime:'běží',yes:'ano',no:'ne',
+  updated:'aktualizováno',no_resp:'WiFiLink neodpovídá',saved:'uloženo',unsaved:'neuložené změny',error:'chyba',restarting:'restartuji kameru…',
+  m_saved:'uloženo – vydrží restart',m_defaults:'výchozí hodnoty (neuloženo)',m_reverted:'vráceno na uložené',m_invalid_json:'neplatný JSON',
+  hint_restart:'restart kamery ~5 s, ukládá se hned',hint_night:'neukládá se',
+  g_image:'Obraz',g_exposure:'Expozice',g_video:'Video',
+  'c_image.mirror':'Zrcadlit (zpětné zrcátko)','c_image.flip':'Převrátit vzhůru nohama','c_image.luminance':'Jas','c_image.contrast':'Kontrast',
+  'c_image.saturation':'Sytost','c_image.hue':'Odstín',c_night:'Černobílý (noční) režim',
+  'c_isp.exposure':'Nejdelší expozice','c_isp.antiFlicker':'Proti blikání světel','c_isp.slowShutter':'Pomalá závěrka potmě',
+  'c_isp.aGain':'Strop zesílení snímače','c_isp.wdr':'WDR (zkušebně)',
+  'c_video0.bitrate':'Datový tok','c_video0.fps':'Snímků za sekundu','c_video0.gopSize':'Úplný snímek každých','c_video0.rcMode':'Řízení datového toku',
+  'c_video0.minQp':'Nejlepší kvalita (min. QP)','c_video0.maxQp':'Nejhorší kvalita (max. QP)','c_video0.qpDelta':'Úplný snímek kvalitněji o (QP)',
+  o_disabled:'vypnuto',o_low:'málo',o_medium:'středně',o_high:'hodně',o_off:'vypnuto',o_on:'zapnuto',
+  o_cbr:'stálý (CBR)',o_vbr:'proměnlivý (VBR)',o_avbr:'adaptivní (AVBR)'}};
+let lang='en';
+try{const s=localStorage.getItem('vmoto_lang');if(s==='cs'||s==='en')lang=s}catch(e){}
+const T=k=>(I18N[lang][k]??I18N.en[k]??k);
+const tm=m=>m&&m!=='OK'?T(m):'';   // server messages are keys; "error: …" passes through as is
 const $=id=>document.getElementById(id);
+function setLang(l){
+ lang=l;try{localStorage.setItem('vmoto_lang',l)}catch(e){}
+ document.documentElement.lang=l;
+ $('l_en').className=l==='en'?'on':'';$('l_cs').className=l==='cs'?'on':'';
+ document.querySelectorAll('[data-t]').forEach(e=>e.textContent=T(e.dataset.t));
+ if(cam)render(cam);tick();
+}
 const dl=(el,rows)=>{$(el).innerHTML=rows.map(([k,v])=>`<dt>${k}</dt><dd>${v??'–'}</dd>`).join('')};
 const dur=s=>s<60?s+' s':s<3600?Math.floor(s/60)+' min '+(s%60)+' s':Math.floor(s/3600)+' h '+Math.floor(s%3600/60)+' min';
 async function tick(){
  try{
   const s=await (await fetch('/api/status',{cache:'no-store'})).json();
-  const st=$('state');st.textContent=s.state;
-  st.className='big '+(s.state.startsWith('připojeno')?'ok':s.state.startsWith('pozastaveno')?'bad':'');
-  $('maj').innerHTML='majestic (kamera): '+(s.majestic?'<span class=ok>běží</span>':'<span class=bad>neběží</span>');
+  const st=$('state');st.textContent=T('st_'+s.state);
+  st.className='big '+(s.state==='connected'?'ok':s.state==='paused'?'bad':'');
+  $('maj').innerHTML=T('majestic')+': '+(s.majestic?`<span class=ok>${T('running')}</span>`:`<span class=bad>${T('not_running')}</span>`);
   const d=s.display;
-  dl('disp',[['síť',d.ssid||null],['kanál',d.freq?d.freq+' MHz':null],['signál',d.signal||null],
-   ['rychlost',d.tx_rate||null],['IP',d.ip||null],['připojeno',d.connected_s!=null?dur(d.connected_s):null]]);
+  dl('disp',[[T('network'),d.ssid||null],[T('channel'),d.freq?d.freq+' MHz':null],[T('signal'),d.signal||null],
+   [T('rate'),d.tx_rate||null],['IP',d.ip||null],[T('connected'),d.connected_s!=null?dur(d.connected_s):null]]);
   const t=s.stream;
-  dl('stream',t?[['displej bere',t.sent_per_s.toFixed(1)+' snímků/s'],['prázdných odpovědí',t.empty],
-   ['z kamery celkem',t.from_camera],['zahozeno celkem',t.dropped],['fronta',t.queue_avg.toFixed(2)+' snímku'],
-   ['jen úplné snímky',t.idr_only?'ano':'ne']]:[['','zatím bez dat (průměr za 10 s)']]);
+  dl('stream',t?[[T('taking'),t.sent_per_s.toFixed(1)+' '+T('fps')],[T('empty'),t.empty],
+   [T('from_cam'),t.from_camera],[T('dropped'),t.dropped],[T('queue'),t.queue_avg.toFixed(2)+' '+T('frames')],
+   [T('idr_only'),t.idr_only?T('yes'):T('no')]]:[['',T('no_data')]]);
   const v=s.device,tc=parseFloat(v.soc_temp);
   const tcls=isNaN(tc)?'':tc>=85?'bad':tc>=75?'warn':'ok';
-  dl('dev',[['teplota čipu',v.soc_temp?`<span class=${tcls}>${Math.round(tc)} °C</span>`:null],
-   ['Wi-Fi modul',v.wifi_temps&&v.wifi_temps.length?v.wifi_temps.join(' / ')+' (orientačně)':null],
-   ['expozice',s.sensor?s.sensor.exposure+' ms':null],
-   ['zesílení analog / digitál',s.sensor?(s.sensor.again/1024).toFixed(1)+'× / '+(s.sensor.dgain/1024).toFixed(2)+'×':null],
-   ['zátěž',v.load],['volná RAM',v.mem_avail?(parseInt(v.mem_avail)/1024).toFixed(0)+' MB z '+(parseInt(v.mem_total)/1024).toFixed(0):null],
-   ['běží',v.uptime_min+' min']]);
+  dl('dev',[[T('soc_temp'),v.soc_temp?`<span class=${tcls}>${Math.round(tc)} °C</span>`:null],
+   [T('wifi_mod'),v.wifi_temps&&v.wifi_temps.length?v.wifi_temps.join(' / ')+' ('+T('approx')+')':null],
+   [T('exposure'),s.sensor?s.sensor.exposure+' ms':null],
+   [T('gain'),s.sensor?(s.sensor.again/1024).toFixed(1)+'× / '+(s.sensor.dgain/1024).toFixed(2)+'×':null],
+   [T('load'),v.load],[T('ram'),v.mem_avail?(parseInt(v.mem_avail)/1024).toFixed(0)+' MB '+T('of')+' '+(parseInt(v.mem_total)/1024).toFixed(0):null],
+   [T('uptime'),v.uptime_min+' min']]);
   $('log').textContent=(s.log||[]).join('\n');
-  $('ts').textContent='aktualizováno '+s.time;
- }catch(e){$('ts').textContent='WiFiLink neodpovídá: '+e}
+  $('ts').textContent=T('updated')+' '+s.time;
+ }catch(e){$('ts').textContent=T('no_resp')+': '+e}
 }
-tick();setInterval(tick,2000);
 
-const FLICK={disabled:'vypnuto','50':'50 Hz','60':'60 Hz'},RC={cbr:'stálý (CBR)',vbr:'proměnlivý (VBR)',avbr:'adaptivní (AVBR)'};
-const SLOW={disabled:'vypnuto',low:'málo',medium:'středně',high:'hodně'},WDR={'0':'vypnuto','1':'zapnuto'};
-const HINT={restart:'restart kamery ~5 s, ukládá se hned',night:'neukládá se'};
 let cam=null,timers={};
 const msg=t=>$('cammsg').textContent=t;
 function fmt(c,v){
  if(v==null||v==='')return '–';
- if(c.type==='bool')return v==='true'?'ano':'ne';
- if(c.key==='isp.antiFlicker')return FLICK[v]||v;
- if(c.key==='video0.rcMode')return RC[v]||v;
- if(c.key==='isp.slowShutter')return SLOW[v]||v;
- if(c.key==='isp.wdr')return WDR[v]||v;
+ if(c.type==='bool')return v==='true'?T('yes'):T('no');
+ if(c.key==='isp.wdr')return T(v==='1'?'o_on':'o_off');
+ if(c.key==='isp.antiFlicker')return v==='disabled'?T('o_disabled'):v+' Hz';
+ if(c.type==='select')return T('o_'+v);
  if(c.key==='video0.bitrate')return (v/1000).toFixed(1)+' Mbit/s';
  return v+(c.unit?' '+c.unit:'');
 }
@@ -92,20 +147,20 @@ function dirty(){
  return cam.ctrls.some(c=>{const l=cam.live[c.key];if(l==null||c.mode)return false;
   const s=cam.saved[c.key];return s==null?!same(c,l,c.default):!same(c,l,s)});
 }
-function status(d){msg((d.msg&&d.msg!=='OK'?d.msg+' · ':'')+(d.ok?(dirty()?'neuložené změny':'uloženo'):''))}
+function status(d){msg((tm(d.msg)?tm(d.msg)+' · ':'')+(d.ok?(dirty()?T('unsaved'):T('saved')):''))}
 function render(d){
  cam=d;const el=$('ctls');
- if(!d.ok){el.className='bad';el.textContent=d.msg;return}
+ if(!d.ok){el.className='bad';el.textContent=tm(d.msg);return}
  el.className='';let html='',grp='';
  for(const c of d.ctrls){
-  if(c.group!==grp){grp=c.group;html+=`<h3>${grp}</h3>`}
+  if(c.group!==grp){grp=c.group;html+=`<h3>${T('g_'+grp)}</h3>`}
   const v=d.live[c.key]??c.default,sv=d.saved[c.key];
-  const svh=c.mode?`<div class=saved>${HINT[c.mode]}</div>`:sv!=null?`<div class=saved>uloženo ${fmt(c,sv)}</div>`:'';
+  const svh=c.mode?`<div class=saved>${T('hint_'+c.mode)}</div>`:sv!=null?`<div class=saved>${T('saved')} ${fmt(c,sv)}</div>`:'';
   let inp;
   if(c.type==='bool')inp=`<input type=checkbox data-k="${c.key}" ${v==='true'?'checked':''}>`;
   else if(c.type==='select')inp=`<select data-k="${c.key}">`+c.options.map(o=>`<option value="${o}" ${o===v?'selected':''}>${fmt(c,o)}</option>`).join('')+'</select>';
   else inp=`<input type=range data-k="${c.key}" min=${c.min} max=${c.max} step=${c.step} value=${v}>`;
-  html+=`<div class=ctl><label>${c.label}${svh}</label>${inp}<span class=v id="v_${c.key}">${fmt(c,v)}</span></div>`;
+  html+=`<div class=ctl><label>${T('c_'+c.key)}${svh}</label>${inp}<span class=v id="v_${c.key}">${fmt(c,v)}</span></div>`;
  }
  el.innerHTML=html;
  el.querySelectorAll('[data-k]').forEach(i=>{
@@ -114,9 +169,9 @@ function render(d){
    const val=i.type==='checkbox'?(i.checked?'true':'false'):i.value;
    $('v_'+c.key).textContent=fmt(c,val);
    clearTimeout(timers[c.key]);
-   // posuvník: počkat, až se přestane hýbat – každá změna přenastaví enkodér (u restartu déle)
+   // slider: wait until it stops moving – every change re-creates the encoder (longer for a restart)
    const wait=c.mode==='restart'?1500:i.type==='range'?350:0;
-   timers[c.key]=setTimeout(()=>{if(c.mode==='restart')msg('restartuji kameru…');
+   timers[c.key]=setTimeout(()=>{if(c.mode==='restart')msg(T('restarting'));
     post('/api/camera',{[c.key]:val},c.mode==='restart')},wait);
   });
  });
@@ -125,10 +180,13 @@ function render(d){
 async function post(url,body,rerender=true){
  try{const d=await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})).json();
   if(rerender||!d.ok)render(d);else{cam=d;status(d)}}
- catch(e){msg('chyba: '+e)}
+ catch(e){msg(T('error')+': '+e)}
 }
 $('save').onclick=()=>post('/api/camera/save');
 $('defs').onclick=()=>post('/api/camera/defaults');
 $('revert').onclick=()=>post('/api/camera/revert');
-fetch('/api/camera',{cache:'no-store'}).then(r=>r.json()).then(render).catch(e=>msg('chyba: '+e));
+$('l_en').onclick=()=>setLang('en');
+$('l_cs').onclick=()=>setLang('cs');
+setLang(lang);setInterval(tick,2000);
+fetch('/api/camera',{cache:'no-store'}).then(r=>r.json()).then(render).catch(e=>msg(T('error')+': '+e));
 </script></body></html>

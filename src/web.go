@@ -1,17 +1,19 @@
-// Webová stránka WiFiLinku jen na ethernetu (jako web.py na Pi):
+// Status and settings web page of the WiFiLink, Ethernet only (like web.py on the Pi):
 //
-//	/                    HTML stránka, obnovuje se sama
-//	/api/status          stav jako JSON (displej, přenos, Wi-Fi, teploty, log)
-//	/api/camera          GET: nastavení kamery (rozsahy, živé a uložené hodnoty)
-//	                     POST {"image.contrast": 55, ...}: nastaví hned přes API majesticu (/api/v1/set)
-//	/api/camera/save     POST: zapíše živé hodnoty do /etc/majestic.yaml (vydrží restart)
-//	/api/camera/defaults POST: výchozí hodnoty naživo, bez uložení
-//	/api/camera/revert   POST: vrátí uložené hodnoty naživo
+//	/                    HTML page, refreshes itself (EN/CS, translated in the browser)
+//	/api/status          status as JSON (dash, stream, Wi-Fi, temperatures, log)
+//	/api/camera          GET: camera settings (ranges, live and saved values)
+//	                     POST {"image.contrast": 55, ...}: applies at once via majestic's API (/api/v1/set)
+//	/api/camera/save     POST: writes the live values to /etc/majestic.yaml (survives a restart)
+//	/api/camera/defaults POST: default values live, not saved
+//	/api/camera/revert   POST: back to the saved values live
 //
-// Majestic drží změny z /api/v1/set jen v paměti a každá změna na okamžik přenastaví enkodér
-// (obraz běží dál, displej dostane nový úplný snímek). Proto Uložit zapisuje do YAML zvlášť.
-// Zesílení a WDR API odmítá, zrcadlení/převrácení API přijme, ale snímač nezmění: zapíšou se hned
-// do YAML a majestic se restartuje (~5 s bez obrazu).
+// Majestic keeps /api/v1/set changes in memory only and every change briefly re-creates the encoder
+// (the picture keeps running, the dash gets a new IDR frame). Hence Save writes the YAML separately.
+// Gain and WDR are refused by the API; mirror/flip are accepted but the sensor does not change: those are
+// written to the YAML at once and majestic is restarted (~5 s without picture).
+//
+// State and messages are sent as language-neutral keys, the page translates them.
 package main
 
 import (
@@ -36,16 +38,16 @@ import (
 )
 
 var (
-	webAddr      = flag.String("web", ":80", "webová stránka (port; IP se vezme z rozhraní -webif)")
-	webIf        = flag.String("webif", "eth0", "rozhraní pro webovou stránku (prázdné = poslouchat na adrese z -web)")
-	majesticURL  = flag.String("majestic", "http://127.0.0.1:8080", "HTTP API majesticu")
-	majesticYAML = flag.String("yaml", "/etc/majestic.yaml", "konfigurace majesticu pro Uložit")
+	webAddr      = flag.String("web", ":80", "web page (port; the IP is taken from interface -webif)")
+	webIf        = flag.String("webif", "eth0", "interface for the web page (empty = listen on the address from -web)")
+	majesticURL  = flag.String("majestic", "http://127.0.0.1:8080", "majestic HTTP API")
+	majesticYAML = flag.String("yaml", "/etc/majestic.yaml", "majestic configuration used by Save")
 )
 
 //go:embed web.html
 var webPage []byte
 
-// ---------- statistiky přenosu (plní handleMediaData každých 10 s) ----------
+// ---------- stream statistics (filled by handleMediaData every 10 s) ----------
 
 type streamStats struct {
 	SentPerS   float64   `json:"sent_per_s"`
@@ -70,19 +72,18 @@ func setStreamStats(st streamStats) {
 	statsMu.Unlock()
 }
 
-// ---------- ovládání kamery ----------
+// ---------- camera controls ----------
 
-// Jak se hodnota u majesticu mění:
+// How majestic changes the value:
 //
-//	""        naživo přes /api/v1/set, Uložit zapíše do YAML
-//	"restart" jen přes YAML + restart majesticu (API klíč odmítne) - ukládá se hned
-//	"night"   /night/on|off, stav z /metrics/night - neukládá se (po restartu vždy den)
+//	""        live via /api/v1/set, Save writes it to the YAML
+//	"restart" only via YAML + majestic restart (the API refuses the key) - saved at once
+//	"night"   /night/on|off, state from /metrics - not saved (always day after a restart)
 type camCtrl struct {
-	Key     string   `json:"key"` // sekce.klíč v majesticu
+	Key     string   `json:"key"` // section.key in majestic; the page shows a translated label for it
 	Mode    string   `json:"mode,omitempty"`
-	DropDef bool     `json:"-"` // výchozí hodnota = klíč z YAML smazat
+	DropDef bool     `json:"-"` // default value = remove the key from the YAML
 	Group   string   `json:"group"`
-	Label   string   `json:"label"`
 	Type    string   `json:"type"` // bool | range | select
 	Min     float64  `json:"min,omitempty"`
 	Max     float64  `json:"max,omitempty"`
@@ -92,35 +93,32 @@ type camCtrl struct {
 	Def     string   `json:"default"`
 }
 
-// Kodek, rozlišení a profil se nenabízí: displej chce H.264 1024×592 a úprava SPS počítá s Main.
+// Codec, resolution and profile are not offered: the dash wants H.264 1024×592 and the SPS rewrite expects Main.
 var camCtrls = []camCtrl{
-	// zrcadlení/převrácení nastavuje majestic snímači jen při startu (API změní config, snímač ne)
-	{Key: "image.mirror", Mode: "restart", Group: "Obraz", Label: "Zrcadlit (zpětné zrcátko)", Type: "bool", Def: "true"},
-	{Key: "image.flip", Mode: "restart", Group: "Obraz", Label: "Převrátit vzhůru nohama", Type: "bool", Def: "false"},
-	{Key: "image.luminance", Group: "Obraz", Label: "Jas", Type: "range", Min: 0, Max: 100, Step: 1, Def: "47"},
-	{Key: "image.contrast", Group: "Obraz", Label: "Kontrast", Type: "range", Min: 0, Max: 100, Step: 1, Def: "50"},
-	{Key: "image.saturation", Group: "Obraz", Label: "Sytost", Type: "range", Min: 0, Max: 100, Step: 1, Def: "40"},
-	{Key: "image.hue", Group: "Obraz", Label: "Odstín", Type: "range", Min: 0, Max: 100, Step: 1, Def: "50"},
-	{Key: "night", Mode: "night", Group: "Obraz", Label: "Černobílý (noční) režim", Type: "bool", Def: "false"},
-	{Key: "isp.exposure", Group: "Expozice", Label: "Nejdelší expozice", Type: "range", Min: 1, Max: 40, Step: 1, Unit: "ms", Def: "14"},
-	{Key: "isp.antiFlicker", Group: "Expozice", Label: "Proti blikání světel", Type: "select",
-		Options: []string{"disabled", "50", "60"}, Def: "disabled"},
-	{Key: "isp.slowShutter", Group: "Expozice", Label: "Pomalá závěrka potmě", Type: "select",
+	// majestic sets mirror/flip on the sensor only at start (the API changes the config, not the sensor)
+	{Key: "image.mirror", Mode: "restart", Group: "image", Type: "bool", Def: "true"},
+	{Key: "image.flip", Mode: "restart", Group: "image", Type: "bool", Def: "false"},
+	{Key: "image.luminance", Group: "image", Type: "range", Min: 0, Max: 100, Step: 1, Def: "47"},
+	{Key: "image.contrast", Group: "image", Type: "range", Min: 0, Max: 100, Step: 1, Def: "50"},
+	{Key: "image.saturation", Group: "image", Type: "range", Min: 0, Max: 100, Step: 1, Def: "40"},
+	{Key: "image.hue", Group: "image", Type: "range", Min: 0, Max: 100, Step: 1, Def: "50"},
+	{Key: "night", Mode: "night", Group: "image", Type: "bool", Def: "false"},
+	{Key: "isp.exposure", Group: "exposure", Type: "range", Min: 1, Max: 40, Step: 1, Unit: "ms", Def: "14"},
+	{Key: "isp.antiFlicker", Group: "exposure", Type: "select", Options: []string{"disabled", "50", "60"}, Def: "disabled"},
+	{Key: "isp.slowShutter", Group: "exposure", Type: "select",
 		Options: []string{"disabled", "low", "medium", "high"}, Def: "disabled"},
-	// aGain = strop analogového zesílení v násobcích (4 -> "analog: 4"), nad 64 majestic omezí na 64;
-	// výchozí hodnota se z YAML smaže (bez klíče majestic hlásí "analog: 128")
-	{Key: "isp.aGain", Mode: "restart", DropDef: true, Group: "Expozice", Label: "Strop zesílení snímače", Type: "range",
+	// aGain = analog gain limit as a multiple (4 -> "analog: 4"), majestic caps it at 64;
+	// the default removes the key from the YAML (without it majestic reports "analog: 128")
+	{Key: "isp.aGain", Mode: "restart", DropDef: true, Group: "exposure", Type: "range",
 		Min: 1, Max: 64, Step: 1, Unit: "×", Def: "64"},
-	{Key: "isp.wdr", Mode: "restart", Group: "Expozice", Label: "WDR (zkušebně)", Type: "select",
-		Options: []string{"0", "1"}, Def: "0"},
-	{Key: "video0.bitrate", Group: "Video", Label: "Datový tok", Type: "range", Min: 2000, Max: 20000, Step: 500, Unit: "kbit/s", Def: "8000"},
-	{Key: "video0.fps", Group: "Video", Label: "Snímků za sekundu", Type: "range", Min: 15, Max: 30, Step: 1, Def: "25"},
-	{Key: "video0.gopSize", Group: "Video", Label: "Úplný snímek každých", Type: "range", Min: 0.2, Max: 2, Step: 0.1, Unit: "s", Def: "0.5"},
-	{Key: "video0.rcMode", Group: "Video", Label: "Řízení datového toku", Type: "select",
-		Options: []string{"cbr", "vbr", "avbr"}, Def: "cbr"},
-	{Key: "video0.minQp", Group: "Video", Label: "Nejlepší kvalita (min. QP)", Type: "range", Min: 0, Max: 51, Step: 1, Def: "12"},
-	{Key: "video0.maxQp", Group: "Video", Label: "Nejhorší kvalita (max. QP)", Type: "range", Min: 0, Max: 51, Step: 1, Def: "48"},
-	{Key: "video0.qpDelta", Group: "Video", Label: "Úplný snímek kvalitněji o (QP)", Type: "range", Min: -12, Max: 12, Step: 1, Def: "-7"},
+	{Key: "isp.wdr", Mode: "restart", Group: "exposure", Type: "select", Options: []string{"0", "1"}, Def: "0"},
+	{Key: "video0.bitrate", Group: "video", Type: "range", Min: 2000, Max: 20000, Step: 500, Unit: "kbit/s", Def: "8000"},
+	{Key: "video0.fps", Group: "video", Type: "range", Min: 15, Max: 30, Step: 1, Def: "25"},
+	{Key: "video0.gopSize", Group: "video", Type: "range", Min: 0.2, Max: 2, Step: 0.1, Unit: "s", Def: "0.5"},
+	{Key: "video0.rcMode", Group: "video", Type: "select", Options: []string{"cbr", "vbr", "avbr"}, Def: "cbr"},
+	{Key: "video0.minQp", Group: "video", Type: "range", Min: 0, Max: 51, Step: 1, Def: "12"},
+	{Key: "video0.maxQp", Group: "video", Type: "range", Min: 0, Max: 51, Step: 1, Def: "48"},
+	{Key: "video0.qpDelta", Group: "video", Type: "range", Min: -12, Max: 12, Step: 1, Def: "-7"},
 }
 
 func findCtrl(key string) *camCtrl {
@@ -146,7 +144,7 @@ func valStr(v interface{}) string {
 	return fmt.Sprint(v)
 }
 
-// normalize ověří a zaokrouhlí hodnotu pro majestic
+// normalize validates and rounds a value for majestic
 func (c *camCtrl) normalize(raw string) (string, error) {
 	switch c.Type {
 	case "bool":
@@ -157,11 +155,11 @@ func (c *camCtrl) normalize(raw string) (string, error) {
 				return raw, nil
 			}
 		}
-		return "", fmt.Errorf("%s: neplatná volba %q", c.Key, raw)
+		return "", fmt.Errorf("%s: invalid option %q", c.Key, raw)
 	case "range":
 		f, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
-			return "", fmt.Errorf("%s: není číslo", c.Key)
+			return "", fmt.Errorf("%s: not a number", c.Key)
 		}
 		f = math.Max(c.Min, math.Min(c.Max, math.Round(f/c.Step)*c.Step))
 		if c.Step < 1 {
@@ -169,7 +167,7 @@ func (c *camCtrl) normalize(raw string) (string, error) {
 		}
 		return strconv.FormatFloat(f, 'f', 0, 64), nil
 	}
-	return "", fmt.Errorf("%s: neznámý typ", c.Key)
+	return "", fmt.Errorf("%s: unknown type", c.Key)
 }
 
 var httpc = &http.Client{Timeout: 4 * time.Second}
@@ -187,7 +185,7 @@ func majesticLive() (map[string]string, error) {
 	out, saved, m := map[string]string{}, yamlRead(*majesticYAML), majesticMetrics()
 	for _, c := range camCtrls {
 		switch c.Mode {
-		case "restart": // platí to, co je v YAML (majestic se s ním spustil)
+		case "restart": // what is in the YAML applies (majestic was started with it)
 			if v, ok := saved[c.Key]; ok {
 				out[c.Key] = v
 			} else {
@@ -205,7 +203,7 @@ func majesticLive() (map[string]string, error) {
 	return out, nil
 }
 
-// majesticMetrics čte /metrics (text Prometheus): isp_exposure, isp_again, isp_dgain, isp_fps, night_enabled, ...
+// majesticMetrics reads /metrics (Prometheus text): isp_exposure, isp_again, isp_dgain, isp_fps, night_enabled, ...
 func majesticMetrics() map[string]string {
 	out := map[string]string{}
 	resp, err := httpc.Get(*majesticURL + "/metrics")
@@ -222,9 +220,9 @@ func majesticMetrics() map[string]string {
 	return out
 }
 
-var camMu sync.Mutex // změny kamery jedna po druhé (restart majesticu trvá několik sekund)
+var camMu sync.Mutex // camera changes one at a time (a majestic restart takes several seconds)
 
-// applyValues rozdělí hodnoty podle způsobu změny a provede je
+// applyValues splits the values by how majestic changes them and applies them
 func applyValues(vals map[string]string) error {
 	live, restart, night := map[string]string{}, map[string]string{}, ""
 	saved := yamlRead(*majesticYAML)
@@ -238,7 +236,7 @@ func applyValues(vals map[string]string) error {
 			}
 			if cur != v {
 				if c.DropDef && v == c.Def {
-					v = "" // výchozí = klíč v YAML nemít, jako před úpravou
+					v = "" // default = no key in the YAML, as before any change
 				}
 				restart[k] = v
 			}
@@ -270,7 +268,7 @@ func applyValues(vals map[string]string) error {
 	return nil
 }
 
-// restartMajestic zapíše hodnoty do YAML, restartuje majestic a vrátí mu neuložené živé změny
+// restartMajestic writes the values to the YAML, restarts majestic and re-applies unsaved live changes
 func restartMajestic(yamlVals map[string]string) error {
 	before, err := majesticLive()
 	if err != nil {
@@ -279,8 +277,8 @@ func restartMajestic(yamlVals map[string]string) error {
 	if err := yamlWrite(*majesticYAML, yamlVals); err != nil {
 		return err
 	}
-	log.Printf("[web] restart majesticu kvůli %v", yamlVals)
-	// stejně jako S95vmoto; majestic se odpojí od sh a běží dál sám
+	log.Printf("[web] restarting majestic for %v", yamlVals)
+	// same as S95vmoto; majestic detaches from sh and keeps running on its own
 	exec.Command("sh", "-c", "killall majestic; sleep 2; majestic -s > /tmp/majestic.log 2>&1 &").Run()
 	deadline := time.Now().Add(20 * time.Second)
 	for {
@@ -289,7 +287,7 @@ func restartMajestic(yamlVals map[string]string) error {
 			break
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("majestic po restartu neodpovídá")
+			return fmt.Errorf("majestic not responding after restart")
 		}
 	}
 	restore := map[string]string{}
@@ -315,12 +313,12 @@ func majesticSet(vals map[string]string) error {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("majestic odpověděl %s", resp.Status)
+		return fmt.Errorf("majestic replied %s", resp.Status)
 	}
 	return nil
 }
 
-// ---------- /etc/majestic.yaml (jen dvě úrovně: sekce a klíč) ----------
+// ---------- /etc/majestic.yaml (two levels only: section and key) ----------
 
 func isSection(line string) (string, bool) {
 	t := strings.TrimRight(line, " \r")
@@ -361,7 +359,7 @@ func yamlWrite(path string, vals map[string]string) error {
 		return err
 	}
 	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
-	for full, v := range vals { // prázdná hodnota = klíč smazat
+	for full, v := range vals { // empty value = remove the key
 		sec, key, _ := strings.Cut(full, ".")
 		entry := "  " + key + ": " + v
 		start := -1
@@ -407,10 +405,10 @@ func yamlWrite(path string, vals map[string]string) error {
 		}
 		os.Remove(tmp)
 	}
-	return os.WriteFile(path, data, 0644) // např. když je soubor připojený bind mountem
+	return os.WriteFile(path, data, 0644) // e.g. when the file is bind-mounted
 }
 
-// ---------- stav ----------
+// ---------- status ----------
 
 func run(name string, args ...string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -459,7 +457,7 @@ func kv(text, sep string) map[string]string {
 
 var (
 	reThermal = regexp.MustCompile(`temperature: (-?\d+)`)
-	reLogSkip = regexp.MustCompile(`\[10920\] 10s:|\[ec-init\] dial`) // opakuje se každé 3 s, než je displej
+	reLogSkip = regexp.MustCompile(`\[10920\] 10s:|\[ec-init\] dial`) // repeats every 3 s until the dash is there
 )
 
 func webStatus(s *state) map[string]interface{} {
@@ -469,14 +467,14 @@ func webStatus(s *state) map[string]interface{} {
 
 	wpa := kv(run("wpa_cli", "-p", "/tmp/wpa_ctrl", "-i", "wlan0", "status"), "=")
 	link := kv(run("iw", "dev", "wlan0", "link"), ":")
-	state := "hledá displej"
+	state := "searching"
 	switch {
 	case fileExists("/etc/vmoto/DISABLE"):
-		state = "pozastaveno (DISABLE)"
+		state = "paused"
 	case conns > 0:
-		state = "připojeno k displeji"
+		state = "connected"
 	case wpa["wpa_state"] == "COMPLETED":
-		state = "Wi-Fi připojeno, čeká na displej"
+		state = "wifi" // Wi-Fi Direct up, waiting for the dash
 	}
 	disp := map[string]interface{}{"ssid": wpa["ssid"], "freq": wpa["freq"], "ip": wpa["ip_address"],
 		"signal": link["signal"], "tx_rate": link["tx bitrate"]}
@@ -527,7 +525,7 @@ func webStatus(s *state) map[string]interface{} {
 	}
 }
 
-// aktuální stav automatiky snímače z majesticu (zesílení je v 1/1024)
+// current state of the sensor's auto exposure from majestic (gain in 1/1024)
 func sensorMetrics() map[string]string {
 	m := majesticMetrics()
 	if m["isp_exposure"] == "" {
@@ -550,10 +548,11 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// cameraReply: msg is a key the page translates (m_saved, ...) or "error: <detail>" shown as is
 func cameraReply(w http.ResponseWriter, msg string) {
 	live, err := majesticLive()
 	if err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "msg": "majestic neodpovídá: " + err.Error(),
+		writeJSON(w, map[string]interface{}{"ok": false, "msg": "error: majestic not responding: " + err.Error(),
 			"ctrls": camCtrls, "live": map[string]string{}, "saved": yamlRead(*majesticYAML)})
 		return
 	}
@@ -569,7 +568,7 @@ func cameraReply(w http.ResponseWriter, msg string) {
 
 func errMsg(err error, ok string) string {
 	if err != nil {
-		return "chyba: " + err.Error()
+		return "error: " + err.Error()
 	}
 	return ok
 }
@@ -593,7 +592,7 @@ func webServer(s *state) {
 		}
 		var body map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			cameraReply(w, "chyba: neplatný JSON")
+			cameraReply(w, "m_invalid_json")
 			return
 		}
 		vals := map[string]string{}
@@ -604,7 +603,7 @@ func webServer(s *state) {
 			}
 			n, err := c.normalize(valStr(v))
 			if err != nil {
-				cameraReply(w, "chyba: "+err.Error())
+				cameraReply(w, "error: "+err.Error())
 				return
 			}
 			vals[k] = n
@@ -620,7 +619,7 @@ func webServer(s *state) {
 		}
 		camMu.Lock()
 		defer camMu.Unlock()
-		cameraReply(w, errMsg(applyValues(vals), "výchozí hodnoty (neuloženo)"))
+		cameraReply(w, errMsg(applyValues(vals), "m_defaults"))
 	})
 	mux.HandleFunc("/api/camera/revert", func(w http.ResponseWriter, r *http.Request) {
 		all, vals := yamlRead(*majesticYAML), map[string]string{"night": "false"}
@@ -633,27 +632,27 @@ func webServer(s *state) {
 		}
 		camMu.Lock()
 		defer camMu.Unlock()
-		cameraReply(w, errMsg(applyValues(vals), "vráceno na uložené"))
+		cameraReply(w, errMsg(applyValues(vals), "m_reverted"))
 	})
 	mux.HandleFunc("/api/camera/save", func(w http.ResponseWriter, r *http.Request) {
 		camMu.Lock()
 		defer camMu.Unlock()
 		live, err := majesticLive()
 		if err != nil {
-			cameraReply(w, "chyba: "+err.Error())
+			cameraReply(w, "error: "+err.Error())
 			return
 		}
 		vals := map[string]string{}
 		for _, c := range camCtrls {
-			if v, ok := live[c.Key]; ok && c.Mode == "" { // "restart" už v YAML je, "night" se neukládá
+			if v, ok := live[c.Key]; ok && c.Mode == "" { // "restart" already is in the YAML, "night" is not saved
 				vals[c.Key] = v
 			}
 		}
 		err = yamlWrite(*majesticYAML, vals)
 		if err == nil {
-			log.Printf("[web] nastavení kamery uloženo do %s", *majesticYAML)
+			log.Printf("[web] camera settings saved to %s", *majesticYAML)
 		}
-		cameraReply(w, errMsg(err, "uloženo – vydrží restart"))
+		cameraReply(w, errMsg(err, "m_saved"))
 	})
 
 	lastErr := ""
@@ -671,7 +670,7 @@ func webServer(s *state) {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			if err.Error() != lastErr {
-				log.Printf("[web] %v (zkouším znovu)", err)
+				log.Printf("[web] %v (retrying)", err)
 				lastErr = err.Error()
 			}
 			time.Sleep(10 * time.Second)
@@ -680,7 +679,7 @@ func webServer(s *state) {
 		log.Printf("[web] http://%s/", addr)
 		lastErr = ""
 		err = http.Serve(ln, mux)
-		log.Printf("[web] konec: %v", err)
+		log.Printf("[web] stopped: %v", err)
 		time.Sleep(5 * time.Second)
 	}
 }

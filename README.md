@@ -12,7 +12,7 @@ This is the WiFiLink equivalent of the Raspberry Pi project
 - Bike restarted → reconnects automatically (~20 s after the dash is up)
 - **~100 ms** glass-to-glass latency, 25 fps, 1024×592, hardware H.264 from the built-in IMX415 camera
 - Mirrored image (rear-view mirror), brightness/contrast/saturation, exposure, gain limit, anti-flicker, bitrate…
-- Status & settings web page over Ethernet, most changes apply **live** on the dash, *Uložit* (Save) keeps them
+- Status & settings web page over Ethernet (EN/CS), most changes apply **live** on the dash, *Save* keeps them
 - One-command installer from a Windows PC; RubyFPV is only disabled and can be restored
 
 > [!WARNING]
@@ -50,13 +50,14 @@ Configuration before installing:
 - `install/majestic-settings.txt` – camera and video settings (written to `/etc/majestic.yaml`)
 - `install/vmoto.conf` – `DASH=` empty = any Carbit dash, or a fixed dash MAC; `TXP=` TX power (0 = chip minimum)
 
-## Web page (Czech UI)
+## Web page
 
 - Connection state, dash network/channel/signal, frames per second, dropped frames, SoC and Wi-Fi temperature,
   current exposure and sensor gain, recent log
 - Camera: mirror/flip, brightness, contrast, saturation, hue, black & white, max exposure, anti-flicker,
   slow shutter, sensor gain limit, WDR, bitrate, fps, I-frame interval, rate control, QP limits
 - Live via majestic's API; gain, WDR and mirror/flip need a camera restart (~5 s without picture, saved at once)
+- **EN / CS** language switch (English by default, remembered in the browser)
 - JSON API: `/api/status`, `/api/camera` (see `src/web.go`)
 
 ## How it works
@@ -73,7 +74,8 @@ Key pieces:
   ~7 frames (~400 ms). `vmoto-wfl` rewrites every SPS with `max_num_reorder_frames=0` and
   `max_dec_frame_buffering=1` → ~100 ms. The frame queue is reset on every IDR frame.
 
-Details: [docs/WIFILINK.md](docs/WIFILINK.md) (Czech), protocol notes: [docs/PROTOCOL.md](docs/PROTOCOL.md).
+Details: [docs/WIFILINK.md](docs/WIFILINK.md), protocol notes: [docs/PROTOCOL.md](docs/PROTOCOL.md).
+The installer's messages, the WiFiLink logs and code comments outside the web server are in Czech.
 
 Files: `install/` (installer and everything that goes to the WiFiLink), `src/` (vmoto-wfl source, `build.sh`),
 `driver/` (driver build), `tools/test_fake_dash.py` (local test against a simulated dash).
@@ -117,8 +119,9 @@ Na novém WiFiLinku se jednou zeptá na heslo roota (výchozí `12345`), nahraje
 a firmware, nainstaluje a restartuje. Pak displej motorky přepnout do režimu pro připojení mobilu a zapnout WiFiLink.
 
 Nastavení na **http://192.168.1.10/**: zrcadlení, jas, kontrast, sytost, expozice, strop zesílení, WDR,
-datový tok… – většina se projeví hned, tlačítko *Uložit* je zachová. Zesílení, WDR a zrcadlení restartují
-kameru (~5 s bez obrazu) a ukládají se hned.
+datový tok… – většina se projeví hned, tlačítko *Save* je zachová. Zesílení, WDR a zrcadlení restartují
+kameru (~5 s bez obrazu) a ukládají se hned. Stránka je anglicky, přepínačem **CS** vpravo nahoře se přepne
+do češtiny (prohlížeč si volbu pamatuje).
 
 Před instalací jde upravit `install/majestic-settings.txt` (nastavení kamery) a `install/vmoto.conf`
 (`DASH=` prázdné = jakýkoli displej Carbit v dosahu, jinak MAC displeje; `TXP=` vysílací výkon).

@@ -1,82 +1,84 @@
-# RunCam WiFiLink → displej Carbit / EasyConn – technické poznámky
+# RunCam WiFiLink → Carbit / EasyConn dash – technical notes
 
-Ověřeno 30.–31. 10. 2026 na displeji Vmoto Stash: obraz z kamery IMX415 ve WiFiLinku přímo na displeji,
-25 snímků/s, **zpoždění ~100 ms** (stopky, kamera → displej). Protokol displeje: [PROTOCOL.md](PROTOCOL.md).
+Verified 30–31 Oct 2026 on a Vmoto Stash dash: the WiFiLink's IMX415 camera directly on the dash,
+25 frames/s, **~100 ms latency** (stopwatch, camera → dash). Dash protocol: [PROTOCOL.md](PROTOCOL.md).
 
 ## Hardware / firmware
-SigmaStar SSC338Q (2× Cortex-A7, 91 MB RAM pro Linux), Sony IMX415, Wi-Fi RTL8812EU
-(`8812eu.ko`, rtl88x2eu v5.15.0.1-249-g9245f8bd9), RubyFPV nad OpenIPC 2.6.03.04
-(Buildroot 2024.02.10, jádro 4.9.84). Flash: overlay 5,7 MB. Ethernet 192.168.1.10.
+SigmaStar SSC338Q (2× Cortex-A7, 91 MB RAM for Linux), Sony IMX415, Wi-Fi RTL8812EU
+(`8812eu.ko`, rtl88x2eu v5.15.0.1-249-g9245f8bd9), RubyFPV on OpenIPC 2.6.03.04
+(Buildroot 2024.02.10, Linux 4.9.84). Flash: 5.7 MB overlay. Ethernet 192.168.1.10.
 
-## Co bylo potřeba
-1. **Ovladač s Wi-Fi Direct.** Původní `8812eu.ko` je přeložený s `CONFIG_P2P = n` → `wpa_supplicant` hlásí
-   „P2P disabled“. [driver/build.sh](../driver/build.sh) sestaví OpenIPC firmware pro `ssc338q_rubyfpv_generic`
-   (OpenIPC builder) a ovladač přeloží znovu s `CONFIG_P2P = y` (~20 min napoprvé).
-   Vermagic `4.9.84 SMP preempt mod_unload ARMv7 thumb2 p2v8` – `install.sh` ho porovná s ovladačem ve firmwaru.
+## What was needed
+1. **Driver with Wi-Fi Direct.** The stock `8812eu.ko` is built with `CONFIG_P2P = n` → `wpa_supplicant` reports
+   "P2P disabled". [driver/build.sh](../driver/build.sh) builds the OpenIPC firmware for `ssc338q_rubyfpv_generic`
+   (OpenIPC builder) and rebuilds the driver with `CONFIG_P2P = y` (~20 min the first time).
+   Vermagic `4.9.84 SMP preempt mod_unload ARMv7 thumb2 p2v8` – `install.sh` compares it with the firmware's driver.
    ```
    # Docker
    docker build -t wfl-driver driver && docker run --rm -v "$PWD/out:/out" wfl-driver
-   # nebo přímo v Linuxu / WSL
+   # or directly on Linux / WSL
    OUT="$PWD/out" bash driver/build.sh
    xz -9 --check=crc32 --lzma2=preset=9,dict=4MiB -c out/8812eu.ko > install/8812eu.ko.xz
    ```
-2. **Wi-Fi Direct:** `wpa_supplicant` z firmwaru, displej je autonomní GO → `p2p_prov_disc <MAC> pbc join`
-   a `p2p_connect <MAC> pbc join freq=<listen_freq>`. Skupinové rozhraní je přímo `wlan0`, DHCP `udhcpc`.
+2. **Wi-Fi Direct:** `wpa_supplicant` from the firmware; the dash is an autonomous GO → `p2p_prov_disc <MAC> pbc join`
+   and `p2p_connect <MAC> pbc join freq=<listen_freq>`. The group interface is `wlan0` itself, DHCP via `udhcpc`.
 3. **Video:** majestic → `video0: h264, profile main, 1024x592, 25 fps, gopSize 0.5`,
-   `outgoing: udp://127.0.0.1:5600` (RTP). `profile baseline` majestic nepřijme.
-4. **Protokol displeje:** `vmoto-wfl` (Go, [src/](../src/)) – ohlášení 10930, PXC 10922 (C2P/P2C),
-   média 10921/10920, RTP → H.264 access units, webová stránka.
+   `outgoing: udp://127.0.0.1:5600` (RTP). Majestic does not accept `profile baseline`.
+4. **Dash protocol:** `vmoto-wfl` (Go, [src/](../src/)) – announce on 10930, PXC 10922 (C2P/P2C),
+   media 10921/10920, RTP → H.264 access units, web page.
 
-## Nízké zpoždění
-- **Úprava SPS** (`src/sps.go`): majestic (SigmaStar) kóduje H.264 Main bez VUI `bitstream_restriction` →
-  dekodér displeje držel až ~7 snímků (DPB pro level 3.1, ≈400 ms celkem). Program do každého SPS doplní
-  `max_num_reorder_frames=0`, `max_dec_frame_buffering=1` → ~100 ms (ověřeno `ffmpeg -bsf:v trace_headers`).
-- **GOP 0,5 s s P-snímky** – výrazně lepší kvalita než jen IDR snímky při stejném datovém toku.
-- **Fronta se srovná na každém IDR** – jinak zůstane trvale plná (displej bere snímky stejně rychle,
-  jak přicházejí) a obraz je o 3–4 snímky pozadu.
+## Low latency
+- **SPS rewrite** (`src/sps.go`): majestic (SigmaStar) encodes H.264 Main without VUI `bitstream_restriction` →
+  the dash decoder held up to ~7 frames (DPB for level 3.1, ≈400 ms total). The program adds
+  `max_num_reorder_frames=0`, `max_dec_frame_buffering=1` to every SPS → ~100 ms (verified with
+  `ffmpeg -bsf:v trace_headers`).
+- **GOP 0.5 s with P-frames** – much better quality than IDR-only frames at the same bitrate.
+- **Queue reset on every IDR** – otherwise it stays full for good (the dash takes frames exactly as fast as they
+  arrive) and the picture is 3–4 frames behind.
 
-## Instalace na WiFiLinku (co dělá `install/install.sh`)
+## On the WiFiLink (what `install/install.sh` does)
 - `/etc/vmoto/`: `8812eu.ko.xz`, `vmoto-wfl.xz`, `vmoto-loop.sh`, `vmoto.conf`, `restore-ruby.sh`, `VERSION`,
-  záloha `majestic.yaml.ruby`, vypnutý `S73ruby.disabled`.
-- `/etc/init.d/S95vmoto`: rozbalí ovladač a program do `/tmp` (RAM), `modprobe cfg80211` → `insmod 8812eu.ko`
-  → majestic → `vmoto-loop.sh`.
-- `/etc/majestic.yaml` podle `install/majestic-settings.txt` (`cli -s`), majestic na portu 8080.
-- Logy v RAM: `/tmp/vmoto.log`, `/tmp/wfl.log`, `/tmp/majestic.log`.
-- Pozastavit: `touch /etc/vmoto/DISABLE` + reboot. Vrátit RubyFPV: `/etc/vmoto/restore-ruby.sh` + reboot.
+  backup `majestic.yaml.ruby`, disabled `S73ruby.disabled`.
+- `/etc/init.d/S95vmoto`: unpacks the driver and the program into `/tmp` (RAM), `modprobe cfg80211` →
+  `insmod 8812eu.ko` → majestic → `vmoto-loop.sh`.
+- `/etc/majestic.yaml` per `install/majestic-settings.txt` (`cli -s`), majestic on port 8080.
+- Logs in RAM: `/tmp/vmoto.log`, `/tmp/wfl.log`, `/tmp/majestic.log` (in Czech).
+- Pause: `touch /etc/vmoto/DISABLE` + reboot. Restore RubyFPV: `/etc/vmoto/restore-ruby.sh` + reboot.
 
-**`.xz` se slovníkem max. 4 MiB** (`xz -9 --check=crc32 --lzma2=preset=9,dict=4MiB`): busybox `xz` si alokuje
-celý slovník z hlavičky; s výchozími 64 MiB při běžícím majesticu hlásí `corrupted data`.
+**`.xz` with a dictionary of at most 4 MiB** (`xz -9 --check=crc32 --lzma2=preset=9,dict=4MiB`): busybox `xz`
+allocates the whole dictionary from the header; with the default 64 MiB it reports `corrupted data` while
+majestic is running.
 
-**Vysílací výkon:** `iw dev wlan0 set txpower fixed <mBm>`; už `0` dává v `/proc/net/rtl88x2eu/wlan0/tx_power_idx`
-hardwarový index 0 = minimum čipu. Spojení u motorky drží (RSSI −40 až −60 dBm). Výkon za zesilovačem modulu
-nebyl měřen.
+**TX power:** `iw dev wlan0 set txpower fixed <mBm>`; already `0` gives hardware index 0 = chip minimum in
+`/proc/net/rtl88x2eu/wlan0/tx_power_idx`. The link next to the bike holds (RSSI −40 to −60 dBm). Output power
+after the module's amplifier was not measured.
 
-## Webová stránka (`src/web.go`, `src/web.html`)
-http://192.168.1.10/, poslouchá jen na adrese `eth0`. Majestic je přesunutý na port 8080.
-- Stav: displej (síť, kanál, signál, rychlost z `iw dev wlan0 link`), přenos, teplota čipu (`ipcinfo --temp`)
-  a Wi-Fi modulu, expozice a zesílení snímače z majesticu `/metrics`, RAM, log.
-- **Naživo** přes `/api/v1/set`: jas, kontrast, sytost, odstín, nejdelší expozice, anti-flicker, pomalá závěrka
-  (`disabled/low/medium/high`, API vezme i nesmysl), datový tok, fps, GOP, řízení toku, `minQp/maxQp/qpDelta`.
-  Každá změna znovu vytvoří kanál enkodéru (obraz běží dál). *Uložit* zapíše do `/etc/majestic.yaml`.
-- **Restart majesticu** (~5 s bez obrazu, ukládá se hned): `isp.aGain` a `isp.wdr` API odmítne;
-  `image.mirror/flip` API přijme, ale snímač nezmění (`/proc/mi_modules/mi_sensor/mi_sensor0`: `bmirror/bflip`).
-  Po restartu stránka vrátí neuložené živé změny. `aGain` = strop analogového zesílení v násobcích
-  (nad 64 omezeno na 64; bez klíče majestic hlásí `analog: 128`). Účinek `wdr` v logu vidět není.
-- Černobílý režim: `/night/on|off`, stav `night_enabled` v `/metrics`, neukládá se.
+## Web page (`src/web.go`, `src/web.html`)
+http://192.168.1.10/, listens only on the `eth0` address. English with a CS switch. Majestic moved to port 8080.
+- Status: dash (network, channel, signal, link rate from `iw dev wlan0 link`), stream, SoC (`ipcinfo --temp`) and
+  Wi-Fi module temperature, exposure and sensor gain from majestic's `/metrics`, RAM, log.
+- **Live** via `/api/v1/set`: brightness, contrast, saturation, hue, max exposure, anti-flicker, slow shutter
+  (`disabled/low/medium/high`, the API accepts anything), bitrate, fps, GOP, rate control, `minQp/maxQp/qpDelta`.
+  Every change re-creates the encoder channel (the picture keeps running). *Save* writes `/etc/majestic.yaml`.
+- **Majestic restart** (~5 s without picture, saved at once): the API refuses `isp.aGain` and `isp.wdr`;
+  it accepts `image.mirror/flip` but the sensor does not change (`/proc/mi_modules/mi_sensor/mi_sensor0`:
+  `bmirror/bflip`). After the restart the page re-applies unsaved live changes. `aGain` = analog gain limit as a
+  multiple (capped at 64; without the key majestic reports `analog: 128`). No visible effect of `wdr` in the log.
+- Black & white mode: `/night/on|off`, state `night_enabled` in `/metrics`, not saved.
 
-## Zoom (nejde)
-- `video0.crop` se zadává v souřadnicích výstupu (1024×592), zmenší i výsledné video (např. 512×296)
-  a přes API ho majestic nevezme.
-- Režimy snímače z ovladače: 3840×2160@30 (celý čip), 2560×1440@60 (středový výřez ~1,3×),
-  1920×1080@90 (celé zorné pole, binning). Majestic vybírá podle `video0.fps`; displej ale nebere víc
-  než ~25–30 snímků/s. Druhý kanál na 60 fps majestic omezí na 30.
-- Skutečný zoom by vyžadoval vlastní obrazový program se vstupním výřezem škálovače (místo majesticu).
+## Zoom (not possible with majestic)
+- `video0.crop` takes coordinates of the output (1024×592), shrinks the resulting video (e.g. to 512×296) and the
+  API does not accept it.
+- Sensor modes from the driver: 3840×2160@30 (full sensor), 2560×1440@60 (centre crop ~1.3×),
+  1920×1080@90 (full field of view, binning). Majestic picks the mode by `video0.fps`, but the dash takes no more
+  than ~25–30 frames/s. Majestic caps a second channel at 30 fps.
+- A real zoom would need a custom video pipeline using the scaler's input crop (instead of majestic).
 
-## Vývoj
+## Development
 ```
-cd src && ./build.sh              # vmoto-wfl pro ARMv7 + install/vmoto-wfl.xz (Go >= 1.18, xz)
-go build -o vmoto-wfl-x86 . && python3 ../tools/test_fake_dash.py ./vmoto-wfl-x86   # simulovaný displej
+cd src && ./build.sh              # vmoto-wfl for ARMv7 + install/vmoto-wfl.xz (Go >= 1.18, xz)
+go build -o vmoto-wfl-x86 . && python3 ../tools/test_fake_dash.py ./vmoto-wfl-x86   # simulated dash
 ```
-Výměna programu bez restartu WiFiLinku: rozbalit do `/tmp/vmoto-wfl.new`, **nejdřív** `mv` přes `/tmp/vmoto-wfl`,
-pak `killall vmoto-wfl` (jinak ho smyčka stihne znovu spustit ze starého souboru).
-Binárky nahrávat přes `scp -O` (dropbear bez sftp).
+Replacing the program without rebooting the WiFiLink: unpack to `/tmp/vmoto-wfl.new`, **first** `mv` it over
+`/tmp/vmoto-wfl`, then `killall vmoto-wfl` (otherwise the loop restarts it from the old file in time).
+Upload binaries with `scp -O` (dropbear has no sftp).
