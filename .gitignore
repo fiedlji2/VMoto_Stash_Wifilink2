@@ -1,0 +1,7 @@
+# sestavené binárky (do repa jdou jen .xz v install/)
+src/vmoto-wfl
+src/vmoto-wfl-x86
+driver/out/
+out/
+*.h264
+*.pcap

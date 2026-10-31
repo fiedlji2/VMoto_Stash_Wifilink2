@@ -1,0 +1,35 @@
+# Nastavení majesticu, které install.sh zapíše do /etc/majestic.yaml (cli -s .<klíč> <hodnota>).
+# Stav k 31. 10. 2026 (uloženo z webové stránky). Ostatní klíče zůstanou podle firmwaru.
+# Prázdná hodnota = klíč smazat.
+
+# port 80 na ethernetu patří stránce vmoto-wfl, majestic (API pro stránku) jde na 8080
+system.webPort 8080
+
+# video pro displej: H.264 Main 1024x592, GOP 0,5 s, RTP do vmoto-wfl
+video0.codec h264
+video0.profile main
+video0.size 1024x592
+video0.fps 25
+video0.bitrate 10000
+video0.rcMode cbr
+video0.gopSize 0.5
+video0.minQp 12
+video0.maxQp 48
+video0.qpDelta -7
+outgoing.enabled true
+outgoing.server udp://127.0.0.1:5600
+
+# obraz (kamera kouká dozadu -> zrcadlit)
+image.mirror true
+image.flip false
+image.contrast 50
+image.hue 50
+image.saturation 70
+image.luminance 50
+
+# expozice
+isp.exposure 15
+isp.antiFlicker 50
+isp.slowShutter disabled
+isp.aGain 58
+isp.wdr 1

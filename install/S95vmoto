@@ -1,0 +1,31 @@
+#!/bin/sh
+#
+# Vmoto: WiFiLink jako "telefon" pro displej Vmoto Stash (místo RubyFPV)
+# Ovladač 8812eu s P2P + vmoto-wfl se rozbalí z /etc/vmoto do RAM.
+#
+
+case "$1" in
+	start)
+		[ -f /etc/vmoto/DISABLE ] && exit 0
+		xz -dc /etc/vmoto/8812eu.ko.xz > /tmp/8812eu.ko
+		xz -dc /etc/vmoto/vmoto-wfl.xz > /tmp/vmoto-wfl
+		chmod +x /tmp/vmoto-wfl
+		rmmod 8812eu 2>/dev/null
+		# insmod neřeší závislosti: cfg80211 musí být načtený dřív
+		modprobe cfg80211 2>/dev/null || insmod "$(find /lib/modules -name 'cfg80211.ko*' | head -1)"
+		insmod /tmp/8812eu.ko
+		i=0
+		while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 10 ]; do sleep 1; i=$((i + 1)); done
+		pgrep majestic >/dev/null || (majestic -s > /tmp/majestic.log 2>&1 &)
+		(/etc/vmoto/vmoto-loop.sh > /tmp/vmoto.log 2>&1 &)
+		;;
+
+	stop)
+		killall vmoto-loop.sh vmoto-wfl wpa_supplicant 2>/dev/null
+		;;
+
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac

@@ -1,0 +1,5 @@
+# skripty pro WiFiLink musí mít LF i po stažení na Windows (instalačka CR stejně odstraní)
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.xz binary
+*.ko binary

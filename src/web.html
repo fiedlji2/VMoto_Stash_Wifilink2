@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vmoto WiFiLink</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--mut:#6b7385;--ok:#1a8f4c;--warn:#b7791f;--bad:#c0392b;--line:#e3e6ec}
+@media (prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d2128;--fg:#e6e9ef;--mut:#98a0b0;--line:#2c313a}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 8px}
+h3{font-size:13px;color:var(--mut);margin:12px 0 2px;font-weight:600}
+.big{font-size:20px;font-weight:600}.mut{color:var(--mut)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:0}dt{color:var(--mut)}dd{margin:0}
+pre{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;overflow-x:auto;font-size:12px;margin-top:12px}
+#cam{margin-top:12px}
+.ctl{display:grid;grid-template-columns:190px 1fr 90px;gap:10px;align-items:center;padding:4px 0}
+.ctl label{color:var(--mut)}.ctl input[type=range]{width:100%}.ctl .v{text-align:right;font-variant-numeric:tabular-nums}
+.saved{font-size:11px;color:var(--mut)}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+button,select{font:inherit;padding:6px 14px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+select{padding:4px 8px}
+button.primary{background:var(--ok);border-color:var(--ok);color:#fff}
+@media (max-width:560px){.ctl{grid-template-columns:120px 1fr 64px}}
+</style></head><body><main>
+<h1>Vmoto WiFiLink – stav</h1>
+<div class="grid">
+ <div class="card"><h2>Stav</h2><div id="state" class="big">…</div><div id="maj" class="mut"></div></div>
+ <div class="card"><h2>Displej</h2><dl id="disp"></dl></div>
+ <div class="card"><h2>Přenos</h2><dl id="stream"></dl></div>
+ <div class="card"><h2>WiFiLink</h2><dl id="dev"></dl></div>
+</div>
+<div class="card" id="cam"><h2>Kamera – změny se projeví hned na displeji</h2>
+ <div class="mut" style="font-size:13px">Každá změna na okamžik přenastaví enkodér (obraz může krátce cuknout).
+  Bez Uložit platí jen do restartu.</div>
+ <div id="ctls" class="mut">načítám…</div>
+ <div class="btns"><button class="primary" id="save">Uložit</button><button id="defs">Výchozí hodnoty</button>
+  <button id="revert">Vrátit uložené</button><span id="cammsg" class="mut"></span></div>
+</div>
+<pre id="log"></pre>
+<p class="mut" id="ts"></p>
+</main><script>
+const $=id=>document.getElementById(id);
+const dl=(el,rows)=>{$(el).innerHTML=rows.map(([k,v])=>`<dt>${k}</dt><dd>${v??'–'}</dd>`).join('')};
+const dur=s=>s<60?s+' s':s<3600?Math.floor(s/60)+' min '+(s%60)+' s':Math.floor(s/3600)+' h '+Math.floor(s%3600/60)+' min';
+async function tick(){
+ try{
+  const s=await (await fetch('/api/status',{cache:'no-store'})).json();
+  const st=$('state');st.textContent=s.state;
+  st.className='big '+(s.state.startsWith('připojeno')?'ok':s.state.startsWith('pozastaveno')?'bad':'');
+  $('maj').innerHTML='majestic (kamera): '+(s.majestic?'<span class=ok>běží</span>':'<span class=bad>neběží</span>');
+  const d=s.display;
+  dl('disp',[['síť',d.ssid||null],['kanál',d.freq?d.freq+' MHz':null],['signál',d.signal||null],
+   ['rychlost',d.tx_rate||null],['IP',d.ip||null],['připojeno',d.connected_s!=null?dur(d.connected_s):null]]);
+  const t=s.stream;
+  dl('stream',t?[['displej bere',t.sent_per_s.toFixed(1)+' snímků/s'],['prázdných odpovědí',t.empty],
+   ['z kamery celkem',t.from_camera],['zahozeno celkem',t.dropped],['fronta',t.queue_avg.toFixed(2)+' snímku'],
+   ['jen úplné snímky',t.idr_only?'ano':'ne']]:[['','zatím bez dat (průměr za 10 s)']]);
+  const v=s.device,tc=parseFloat(v.soc_temp);
+  const tcls=isNaN(tc)?'':tc>=85?'bad':tc>=75?'warn':'ok';
+  dl('dev',[['teplota čipu',v.soc_temp?`<span class=${tcls}>${Math.round(tc)} °C</span>`:null],
+   ['Wi-Fi modul',v.wifi_temps&&v.wifi_temps.length?v.wifi_temps.join(' / ')+' (orientačně)':null],
+   ['expozice',s.sensor?s.sensor.exposure+' ms':null],
+   ['zesílení analog / digitál',s.sensor?(s.sensor.again/1024).toFixed(1)+'× / '+(s.sensor.dgain/1024).toFixed(2)+'×':null],
+   ['zátěž',v.load],['volná RAM',v.mem_avail?(parseInt(v.mem_avail)/1024).toFixed(0)+' MB z '+(parseInt(v.mem_total)/1024).toFixed(0):null],
+   ['běží',v.uptime_min+' min']]);
+  $('log').textContent=(s.log||[]).join('\n');
+  $('ts').textContent='aktualizováno '+s.time;
+ }catch(e){$('ts').textContent='WiFiLink neodpovídá: '+e}
+}
+tick();setInterval(tick,2000);
+
+const FLICK={disabled:'vypnuto','50':'50 Hz','60':'60 Hz'},RC={cbr:'stálý (CBR)',vbr:'proměnlivý (VBR)',avbr:'adaptivní (AVBR)'};
+const SLOW={disabled:'vypnuto',low:'málo',medium:'středně',high:'hodně'},WDR={'0':'vypnuto','1':'zapnuto'};
+const HINT={restart:'restart kamery ~5 s, ukládá se hned',night:'neukládá se'};
+let cam=null,timers={};
+const msg=t=>$('cammsg').textContent=t;
+function fmt(c,v){
+ if(v==null||v==='')return '–';
+ if(c.type==='bool')return v==='true'?'ano':'ne';
+ if(c.key==='isp.antiFlicker')return FLICK[v]||v;
+ if(c.key==='video0.rcMode')return RC[v]||v;
+ if(c.key==='isp.slowShutter')return SLOW[v]||v;
+ if(c.key==='isp.wdr')return WDR[v]||v;
+ if(c.key==='video0.bitrate')return (v/1000).toFixed(1)+' Mbit/s';
+ return v+(c.unit?' '+c.unit:'');
+}
+const same=(c,a,b)=>c.type==='range'?Math.abs(parseFloat(a)-parseFloat(b))<1e-6:String(a)===String(b);
+function dirty(){
+ if(!cam||!cam.ok)return false;
+ return cam.ctrls.some(c=>{const l=cam.live[c.key];if(l==null||c.mode)return false;
+  const s=cam.saved[c.key];return s==null?!same(c,l,c.default):!same(c,l,s)});
+}
+function status(d){msg((d.msg&&d.msg!=='OK'?d.msg+' · ':'')+(d.ok?(dirty()?'neuložené změny':'uloženo'):''))}
+function render(d){
+ cam=d;const el=$('ctls');
+ if(!d.ok){el.className='bad';el.textContent=d.msg;return}
+ el.className='';let html='',grp='';
+ for(const c of d.ctrls){
+  if(c.group!==grp){grp=c.group;html+=`<h3>${grp}</h3>`}
+  const v=d.live[c.key]??c.default,sv=d.saved[c.key];
+  const svh=c.mode?`<div class=saved>${HINT[c.mode]}</div>`:sv!=null?`<div class=saved>uloženo ${fmt(c,sv)}</div>`:'';
+  let inp;
+  if(c.type==='bool')inp=`<input type=checkbox data-k="${c.key}" ${v==='true'?'checked':''}>`;
+  else if(c.type==='select')inp=`<select data-k="${c.key}">`+c.options.map(o=>`<option value="${o}" ${o===v?'selected':''}>${fmt(c,o)}</option>`).join('')+'</select>';
+  else inp=`<input type=range data-k="${c.key}" min=${c.min} max=${c.max} step=${c.step} value=${v}>`;
+  html+=`<div class=ctl><label>${c.label}${svh}</label>${inp}<span class=v id="v_${c.key}">${fmt(c,v)}</span></div>`;
+ }
+ el.innerHTML=html;
+ el.querySelectorAll('[data-k]').forEach(i=>{
+  const c=d.ctrls.find(x=>x.key===i.dataset.k);
+  i.addEventListener(i.type==='range'?'input':'change',()=>{
+   const val=i.type==='checkbox'?(i.checked?'true':'false'):i.value;
+   $('v_'+c.key).textContent=fmt(c,val);
+   clearTimeout(timers[c.key]);
+   // posuvník: počkat, až se přestane hýbat – každá změna přenastaví enkodér (u restartu déle)
+   const wait=c.mode==='restart'?1500:i.type==='range'?350:0;
+   timers[c.key]=setTimeout(()=>{if(c.mode==='restart')msg('restartuji kameru…');
+    post('/api/camera',{[c.key]:val},c.mode==='restart')},wait);
+  });
+ });
+ status(d);
+}
+async function post(url,body,rerender=true){
+ try{const d=await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})).json();
+  if(rerender||!d.ok)render(d);else{cam=d;status(d)}}
+ catch(e){msg('chyba: '+e)}
+}
+$('save').onclick=()=>post('/api/camera/save');
+$('defs').onclick=()=>post('/api/camera/defaults');
+$('revert').onclick=()=>post('/api/camera/revert');
+fetch('/api/camera',{cache:'no-store'}).then(r=>r.json()).then(render).catch(e=>msg('chyba: '+e));
+</script></body></html>
