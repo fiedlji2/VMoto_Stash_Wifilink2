@@ -83,7 +83,9 @@ hardware blocks via the SigmaStar MI SDK at start; `video0.size` only sets the s
   with the full sensor. `vmoto-wfl` (`src/crop.go`) checks the driver's crop every second and re-applies the
   wanted one (~1–2 s after majestic restarts, also at boot). While majestic starts, the port briefly reports
   `0x0` – such states are ignored.
-- Zoom/pan from the page are live; unsaved values are kept in `/tmp/vmoto-view.json` (survive a restart of
+- The window is always centred on the sensor. While majestic runs, the driver prints the crop without a space
+  once x >= 1000 (`(   0,    0)1108, 612,...`) – the parser must allow that.
+- Zoom from the page is live; the unsaved value is kept in `/tmp/vmoto-view.json` (survives a restart of
   `vmoto-wfl`), *Save* writes `/etc/vmoto/view.json`.
 - Sensor modes from the driver: 3840×2160@30 (full sensor), 2560×1440@60 (centre crop ~1.3×),
   1920×1080@90 (full field of view, binning). Majestic picks the mode by `video0.fps`; the dash takes no more than

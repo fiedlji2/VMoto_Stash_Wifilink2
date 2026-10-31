@@ -60,7 +60,7 @@ const I18N={
   m_saved:'saved – survives a restart',m_defaults:'default values (not saved)',m_reverted:'restored saved values',m_invalid_json:'invalid JSON',
   hint_restart:'camera restart ~5 s, saved at once',hint_night:'not saved',
   g_image:'Image',g_exposure:'Exposure',g_video:'Video',g_view:'Zoom (sensor crop)',crop:'sensor crop',
-  'c_view.zoom':'Zoom','c_view.pan_x':'Pan horizontal','c_view.pan_y':'Pan vertical',
+  'c_view.zoom':'Zoom (sensor centre)',
   'c_image.mirror':'Mirror (rear-view)','c_image.flip':'Flip upside down','c_image.luminance':'Brightness','c_image.contrast':'Contrast',
   'c_image.saturation':'Saturation','c_image.hue':'Hue',c_night:'Black & white (night) mode',
   'c_isp.exposure':'Max exposure','c_isp.antiFlicker':'Anti-flicker','c_isp.slowShutter':'Slow shutter in the dark',
@@ -83,7 +83,7 @@ const I18N={
   m_saved:'uloženo – vydrží restart',m_defaults:'výchozí hodnoty (neuloženo)',m_reverted:'vráceno na uložené',m_invalid_json:'neplatný JSON',
   hint_restart:'restart kamery ~5 s, ukládá se hned',hint_night:'neukládá se',
   g_image:'Obraz',g_exposure:'Expozice',g_video:'Video',g_view:'Výřez (zoom)',crop:'výřez snímače',
-  'c_view.zoom':'Zoom','c_view.pan_x':'Posun vodorovně','c_view.pan_y':'Posun svisle',
+  'c_view.zoom':'Zoom (střed snímače)',
   'c_image.mirror':'Zrcadlit (zpětné zrcátko)','c_image.flip':'Převrátit vzhůru nohama','c_image.luminance':'Jas','c_image.contrast':'Kontrast',
   'c_image.saturation':'Sytost','c_image.hue':'Odstín',c_night:'Černobílý (noční) režim',
   'c_isp.exposure':'Nejdelší expozice','c_isp.antiFlicker':'Proti blikání světel','c_isp.slowShutter':'Pomalá závěrka potmě',
@@ -142,9 +142,7 @@ function fmt(c,v){
  if(c.key==='isp.antiFlicker')return v==='disabled'?T('o_disabled'):v+' Hz';
  if(c.type==='select')return T('o_'+v);
  if(c.key==='video0.bitrate')return (v/1000).toFixed(1)+' Mbit/s';
- if(c.key==='view.zoom')return (+v).toFixed(2)+'×';
- if(c.key==='view.pan_x'||c.key==='view.pan_y')return Math.round(v*100)+' %';
- return v+(c.unit?' '+c.unit:'');
+ if(c.key==='view.zoom')return (+v).toFixed(2)+'×'; return v+(c.unit?' '+c.unit:'');
 }
 const same=(c,a,b)=>c.type==='range'?Math.abs(parseFloat(a)-parseFloat(b))<1e-6:String(a)===String(b);
 function dirty(){

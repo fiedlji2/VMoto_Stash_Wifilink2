@@ -79,7 +79,7 @@ func setStreamStats(st streamStats) {
 //	""        live via /api/v1/set, Save writes it to the YAML
 //	"restart" only via YAML + majestic restart (the API refuses the key) - saved at once
 //	"night"   /night/on|off, state from /metrics - not saved (always day after a restart)
-//	"view"    zoom/pan of the scaler crop window (crop.go), live, Save writes /etc/vmoto/view.json
+//	"view"    zoom = centred scaler crop window (crop.go), live, Save writes /etc/vmoto/view.json
 type camCtrl struct {
 	Key     string   `json:"key"` // section.key in majestic; the page shows a translated label for it
 	Mode    string   `json:"mode,omitempty"`
@@ -105,8 +105,6 @@ var camCtrls = []camCtrl{
 	{Key: "image.hue", Group: "image", Type: "range", Min: 0, Max: 100, Step: 1, Def: "50"},
 	{Key: "night", Mode: "night", Group: "image", Type: "bool", Def: "false"},
 	{Key: "view.zoom", Mode: "view", Group: "view", Type: "range", Min: 1, Max: 3.6, Step: 0.05, Unit: "×", Def: "1"},
-	{Key: "view.pan_x", Mode: "view", Group: "view", Type: "range", Min: -1, Max: 1, Step: 0.02, Def: "0"},
-	{Key: "view.pan_y", Mode: "view", Group: "view", Type: "range", Min: -1, Max: 1, Step: 0.02, Def: "0"},
 	{Key: "isp.exposure", Group: "exposure", Type: "range", Min: 1, Max: 40, Step: 1, Unit: "ms", Def: "14"},
 	{Key: "isp.antiFlicker", Group: "exposure", Type: "select", Options: []string{"disabled", "50", "60"}, Def: "disabled"},
 	{Key: "isp.slowShutter", Group: "exposure", Type: "select",
@@ -238,15 +236,7 @@ func applyValues(vals map[string]string) error {
 		c := findCtrl(k)
 		switch c.Mode {
 		case "view":
-			f, _ := strconv.ParseFloat(v, 64)
-			switch k {
-			case "view.zoom":
-				nv.Zoom = f
-			case "view.pan_x":
-				nv.PanX = f
-			case "view.pan_y":
-				nv.PanY = f
-			}
+			nv.Zoom, _ = strconv.ParseFloat(v, 64)
 			viewChanged = true
 		case "restart":
 			cur, ok := saved[k]
@@ -335,15 +325,7 @@ func curViewCopy() view {
 	return curView
 }
 
-func viewValue(v view, key string) string {
-	switch key {
-	case "view.zoom":
-		return strconv.FormatFloat(v.Zoom, 'f', 2, 64)
-	case "view.pan_x":
-		return strconv.FormatFloat(v.PanX, 'f', 2, 64)
-	}
-	return strconv.FormatFloat(v.PanY, 'f', 2, 64)
-}
+func viewValue(v view, key string) string { return strconv.FormatFloat(v.Zoom, 'f', 2, 64) }
 
 func majesticSet(vals map[string]string) error {
 	if len(vals) == 0 {

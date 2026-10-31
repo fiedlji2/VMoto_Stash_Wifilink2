@@ -11,7 +11,7 @@ This is the WiFiLink equivalent of the Raspberry Pi project
 - Power on → the WiFiLink finds **any Carbit dash in range** (strongest signal wins) and starts streaming
 - Bike restarted → reconnects automatically (~20 s after the dash is up)
 - **~100 ms** glass-to-glass latency, 25 fps, 1024×592, hardware H.264 from the built-in IMX415 camera
-- **Digital zoom 1–3.6× with pan, at full sharpness** – the crop is taken from the 4K sensor before scaling
+- **Digital zoom 1–3.6× at full sharpness** – a centred crop is taken from the 4K sensor before scaling
 - Mirrored image (rear-view mirror), brightness/contrast/saturation, exposure, gain limit, anti-flicker, bitrate…
 - Status & settings web page over Ethernet (EN/CS), most changes apply **live** on the dash, *Save* keeps them
 - One-command installer from a Windows PC; RubyFPV is only disabled and can be restored
@@ -55,7 +55,7 @@ Configuration before installing:
 
 - Connection state, dash network/channel/signal, frames per second, dropped frames, SoC and Wi-Fi temperature,
   current exposure and sensor gain, recent log
-- Camera: mirror/flip, brightness, contrast, saturation, hue, black & white, **zoom and pan**, max exposure,
+- Camera: mirror/flip, brightness, contrast, saturation, hue, black & white, **zoom**, max exposure,
   anti-flicker, slow shutter, sensor gain limit, WDR, bitrate, fps, I-frame interval, rate control, QP limits
 - Live via majestic's API; gain, WDR and mirror/flip need a camera restart (~5 s without picture, saved at once)
 - **EN / CS** language switch (English by default, remembered in the browser)
@@ -125,7 +125,7 @@ powershell -ExecutionPolicy Bypass -File install-wifilink.ps1
 Na novém WiFiLinku se jednou zeptá na heslo roota (výchozí `12345`), nahraje SSH klíč, zkontroluje hardware
 a firmware, nainstaluje a restartuje. Pak displej motorky přepnout do režimu pro připojení mobilu a zapnout WiFiLink.
 
-Nastavení na **http://192.168.1.10/**: zrcadlení, **zoom 1–3,6× s posunem v plné ostrosti** (výřez ze 4K
+Nastavení na **http://192.168.1.10/**: zrcadlení, **zoom 1–3,6× v plné ostrosti** (výřez ze středu 4K
 snímače), jas, kontrast, sytost, expozice, strop zesílení, WDR, datový tok… – většina se projeví hned, tlačítko *Save* je zachová. Zesílení, WDR a zrcadlení restartují
 kameru (~5 s bez obrazu) a ukládají se hned. Stránka je anglicky, přepínačem **CS** vpravo nahoře se přepne
 do češtiny (prohlížeč si volbu pamatuje).

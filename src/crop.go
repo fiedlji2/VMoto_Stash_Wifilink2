@@ -26,14 +26,13 @@ import (
 var (
 	cropTool = flag.String("croptool", "/etc/vmoto/vmoto-crop", "helper that sets the scaler crop (empty = no zoom)")
 	cropLibs = flag.String("croplibs", "/etc/vmoto/lib", "LD_LIBRARY_PATH for the helper (libmi_sys, libmi_vpe)")
-	viewFile = flag.String("viewfile", "/etc/vmoto/view.json", "saved zoom / pan")
-	viewLive = flag.String("viewlive", "/tmp/vmoto-view.json", "unsaved zoom / pan in RAM (survives a restart of this program)")
+	viewFile = flag.String("viewfile", "/etc/vmoto/view.json", "saved zoom")
+	viewLive = flag.String("viewlive", "/tmp/vmoto-view.json", "unsaved zoom in RAM (survives a restart of this program)")
 )
 
+// the crop window is always centred on the sensor
 type view struct {
 	Zoom float64 `json:"zoom"`
-	PanX float64 `json:"pan_x"` // -1 left .. +1 right
-	PanY float64 `json:"pan_y"` // -1 up .. +1 down
 }
 
 var (
@@ -77,8 +76,9 @@ func setView(v view) {
 type vpeState struct{ inW, inH, cx, cy, cw, ch, outW, outH int }
 
 var (
-	reVpeIn   = regexp.MustCompile(`(?m)^\s*0\s+0\s+1\((\d+)x(\d+)\)`)
-	reVpePort = regexp.MustCompile(`(?m)^\s*0\s+0\s+0\s+\S+\s+1\s+\S+\(\s*\d+,\s*\d+\)\s+(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\s+(\d+)\s+(\d+)`)
+	reVpeIn = regexp.MustCompile(`(?m)^\s*0\s+0\s+1\((\d+)x(\d+)\)`)
+	// "YUV420SP(   0,    0)   0,   0,3840,2160     1024      592" - from x >= 1000 there is no space after ")"
+	reVpePort = regexp.MustCompile(`(?m)^\s*0\s+0\s+0\s+\S+\s+1\s+\S+\(\s*\d+,\s*\d+\)\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\s+(\d+)\s+(\d+)`)
 )
 
 func readVPE() (vpeState, error) {
@@ -112,11 +112,8 @@ func cropFor(v view, s vpeState) (x, y, w, h int, maxZoom float64) {
 	z := math.Max(1, math.Min(maxZoom, v.Zoom))
 	w = int(math.Round(bw/z/8)) * 8
 	h = int(math.Round(bh/z/8)) * 8
-	pos := func(free int, pan float64) int {
-		p := float64(free) / 2 * (1 + math.Max(-1, math.Min(1, pan)))
-		return int(math.Max(0, math.Min(float64(free), math.Round(p/2)*2)))
-	}
-	return pos(s.inW-w, v.PanX), pos(s.inH-h, v.PanY), w, h, maxZoom
+	centre := func(free int) int { return int(math.Round(float64(free)/4)) * 2 } // even
+	return centre(s.inW - w), centre(s.inH - h), w, h, maxZoom
 }
 
 // applyView sets the crop for the current view if the driver has a different one

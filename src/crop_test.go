@@ -8,10 +8,9 @@ func TestCropFor(t *testing.T) {
 		v          view
 		x, y, w, h int
 	}{
-		{view{Zoom: 1}, 52, 0, 3736, 2160},                      // dash aspect ratio, no squeeze
-		{view{Zoom: 2}, 984, 540, 1872, 1080},                   // centre
-		{view{Zoom: 2, PanX: 1, PanY: -1}, 1968, 0, 1872, 1080}, // top right
-		{view{Zoom: 10}, 1408, 784, 1024, 592},                  // capped at max (no upscaling)
+		{view{Zoom: 1}, 52, 0, 3736, 2160},     // dash aspect ratio, no squeeze
+		{view{Zoom: 2}, 984, 540, 1872, 1080},  // centre
+		{view{Zoom: 10}, 1408, 784, 1024, 592}, // capped at max (no upscaling)
 	}
 	for _, c := range cases {
 		x, y, w, h, maxZ := cropFor(c.v, s)
@@ -31,6 +30,11 @@ func TestReadVPEFormat(t *testing.T) {
 	in, port := reVpeIn.FindSubmatch(txt), reVpePort.FindSubmatch(txt)
 	if in == nil || port == nil || string(in[1]) != "3840" || string(port[3]) != "3840" || string(port[5]) != "1024" {
 		t.Fatalf("parse: in=%q port=%q", in, port)
+	}
+	// crop from x >= 1000: the driver puts no space after ")" (zoom ~2.3x)
+	wide := []byte("      0       0       0   Frame       1   YUV420SP(   0,    0)1108, 612,1624, 936     1024      592       1007\n")
+	if p := reVpePort.FindSubmatch(wide); p == nil || string(p[1]) != "1108" || string(p[4]) != "936" || string(p[6]) != "592" {
+		t.Fatalf("parse wide: %q", p)
 	}
 	// while majestic starts: port 0x0 -> must not pass as a valid state
 	starting := []byte("      0       0      1(3840x2160)  GB_12BPP\n" +
