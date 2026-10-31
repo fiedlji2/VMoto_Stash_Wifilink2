@@ -79,6 +79,7 @@ func setStreamStats(st streamStats) {
 //	""        live via /api/v1/set, Save writes it to the YAML
 //	"restart" only via YAML + majestic restart (the API refuses the key) - saved at once
 //	"night"   /night/on|off, state from /metrics - not saved (always day after a restart)
+//	"view"    zoom/pan of the scaler crop window (crop.go), live, Save writes /etc/vmoto/view.json
 type camCtrl struct {
 	Key     string   `json:"key"` // section.key in majestic; the page shows a translated label for it
 	Mode    string   `json:"mode,omitempty"`
@@ -103,6 +104,9 @@ var camCtrls = []camCtrl{
 	{Key: "image.saturation", Group: "image", Type: "range", Min: 0, Max: 100, Step: 1, Def: "40"},
 	{Key: "image.hue", Group: "image", Type: "range", Min: 0, Max: 100, Step: 1, Def: "50"},
 	{Key: "night", Mode: "night", Group: "image", Type: "bool", Def: "false"},
+	{Key: "view.zoom", Mode: "view", Group: "view", Type: "range", Min: 1, Max: 3.6, Step: 0.05, Unit: "×", Def: "1"},
+	{Key: "view.pan_x", Mode: "view", Group: "view", Type: "range", Min: -1, Max: 1, Step: 0.02, Def: "0"},
+	{Key: "view.pan_y", Mode: "view", Group: "view", Type: "range", Min: -1, Max: 1, Step: 0.02, Def: "0"},
 	{Key: "isp.exposure", Group: "exposure", Type: "range", Min: 1, Max: 40, Step: 1, Unit: "ms", Def: "14"},
 	{Key: "isp.antiFlicker", Group: "exposure", Type: "select", Options: []string{"disabled", "50", "60"}, Def: "disabled"},
 	{Key: "isp.slowShutter", Group: "exposure", Type: "select",
@@ -162,10 +166,11 @@ func (c *camCtrl) normalize(raw string) (string, error) {
 			return "", fmt.Errorf("%s: not a number", c.Key)
 		}
 		f = math.Max(c.Min, math.Min(c.Max, math.Round(f/c.Step)*c.Step))
-		if c.Step < 1 {
-			return strconv.FormatFloat(f, 'f', 1, 64), nil
+		dec := 0 // decimals from the step (0.1 -> 1, 0.05 -> 2)
+		for s := c.Step; s < 1 && dec < 4; s *= 10 {
+			dec++
 		}
-		return strconv.FormatFloat(f, 'f', 0, 64), nil
+		return strconv.FormatFloat(f, 'f', dec, 64), nil
 	}
 	return "", fmt.Errorf("%s: unknown type", c.Key)
 }
@@ -193,6 +198,8 @@ func majesticLive() (map[string]string, error) {
 			}
 		case "night":
 			out[c.Key] = strconv.FormatBool(m["night_enabled"] == "1")
+		case "view":
+			out[c.Key] = viewValue(curViewCopy(), c.Key)
 		default:
 			sec, key, _ := strings.Cut(c.Key, ".")
 			if v, ok := cfg[sec][key]; ok {
@@ -226,9 +233,21 @@ var camMu sync.Mutex // camera changes one at a time (a majestic restart takes s
 func applyValues(vals map[string]string) error {
 	live, restart, night := map[string]string{}, map[string]string{}, ""
 	saved := yamlRead(*majesticYAML)
+	nv, viewChanged := curViewCopy(), false
 	for k, v := range vals {
 		c := findCtrl(k)
 		switch c.Mode {
+		case "view":
+			f, _ := strconv.ParseFloat(v, 64)
+			switch k {
+			case "view.zoom":
+				nv.Zoom = f
+			case "view.pan_x":
+				nv.PanX = f
+			case "view.pan_y":
+				nv.PanY = f
+			}
+			viewChanged = true
 		case "restart":
 			cur, ok := saved[k]
 			if !ok {
@@ -246,6 +265,9 @@ func applyValues(vals map[string]string) error {
 			live[k] = v
 		}
 	}
+	if viewChanged {
+		setView(nv)
+	}
 	if len(restart) > 0 {
 		if err := restartMajestic(restart); err != nil {
 			return err
@@ -253,6 +275,11 @@ func applyValues(vals map[string]string) error {
 	}
 	if err := majesticSet(live); err != nil {
 		return err
+	}
+	if viewChanged {
+		if err := applyView(); err != nil {
+			return err
+		}
 	}
 	if night != "" {
 		mode := "off"
@@ -292,11 +319,30 @@ func restartMajestic(yamlVals map[string]string) error {
 	}
 	restore := map[string]string{}
 	for _, c := range camCtrls {
-		if v, ok := before[c.Key]; ok && c.Mode != "restart" {
+		if v, ok := before[c.Key]; ok && c.Mode != "restart" && c.Mode != "view" {
 			restore[c.Key] = v
 		}
 	}
-	return applyValues(restore)
+	if err := applyValues(restore); err != nil {
+		return err
+	}
+	return applyView() // majestic starts with the full sensor
+}
+
+func curViewCopy() view {
+	viewMu.Lock()
+	defer viewMu.Unlock()
+	return curView
+}
+
+func viewValue(v view, key string) string {
+	switch key {
+	case "view.zoom":
+		return strconv.FormatFloat(v.Zoom, 'f', 2, 64)
+	case "view.pan_x":
+		return strconv.FormatFloat(v.PanX, 'f', 2, 64)
+	}
+	return strconv.FormatFloat(v.PanY, 'f', 2, 64)
 }
 
 func majesticSet(vals map[string]string) error {
@@ -519,6 +565,7 @@ func webStatus(s *state) map[string]interface{} {
 		"stream":   stream,
 		"majestic": run("pidof", "majestic") != "",
 		"sensor":   sensorMetrics(),
+		"crop":     cropStatus(),
 		"device": map[string]interface{}{"soc_temp": run("ipcinfo", "--temp"), "wifi_temps": wifiTemps,
 			"load": load, "mem_avail": mem["MemAvailable"], "mem_total": mem["MemTotal"], "uptime_min": int(up / 60)},
 		"log": logs,
@@ -533,6 +580,12 @@ func sensorMetrics() map[string]string {
 	}
 	return map[string]string{"exposure": m["isp_exposure"], "again": m["isp_again"], "dgain": m["isp_dgain"],
 		"fps": m["isp_fps"], "night": m["night_enabled"]}
+}
+
+func cropStatus() string {
+	viewMu.Lock()
+	defer viewMu.Unlock()
+	return cropNote
 }
 
 func fileExists(p string) bool {
@@ -558,9 +611,13 @@ func cameraReply(w http.ResponseWriter, msg string) {
 	}
 	saved := map[string]string{}
 	all := yamlRead(*majesticYAML)
+	sv, haveView := loadView()
 	for _, c := range camCtrls {
 		if v, ok := all[c.Key]; ok {
 			saved[c.Key] = v
+		}
+		if c.Mode == "view" && haveView {
+			saved[c.Key] = viewValue(sv, c.Key)
 		}
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "msg": msg, "ctrls": camCtrls, "live": live, "saved": saved})
@@ -574,6 +631,7 @@ func errMsg(err error, ok string) string {
 }
 
 func webServer(s *state) {
+	go viewWatchdog()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
@@ -623,11 +681,15 @@ func webServer(s *state) {
 	})
 	mux.HandleFunc("/api/camera/revert", func(w http.ResponseWriter, r *http.Request) {
 		all, vals := yamlRead(*majesticYAML), map[string]string{"night": "false"}
+		sv, _ := loadView() // no file = default (no zoom)
 		for _, c := range camCtrls {
 			if v, ok := all[c.Key]; ok && c.Mode == "" {
 				if n, err := c.normalize(v); err == nil {
 					vals[c.Key] = n
 				}
+			}
+			if c.Mode == "view" {
+				vals[c.Key] = viewValue(sv, c.Key)
 			}
 		}
 		camMu.Lock()
@@ -650,7 +712,10 @@ func webServer(s *state) {
 		}
 		err = yamlWrite(*majesticYAML, vals)
 		if err == nil {
-			log.Printf("[web] camera settings saved to %s", *majesticYAML)
+			err = saveView(curViewCopy())
+		}
+		if err == nil {
+			log.Printf("[web] camera settings saved to %s and %s", *majesticYAML, *viewFile)
 		}
 		cameraReply(w, errMsg(err, "m_saved"))
 	})

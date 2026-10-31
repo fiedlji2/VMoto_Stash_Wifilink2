@@ -3,3 +3,5 @@
 *.ps1 text eol=crlf
 *.xz binary
 *.ko binary
+*.so binary
+install/vmoto-crop binary

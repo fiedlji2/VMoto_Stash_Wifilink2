@@ -59,7 +59,8 @@ const I18N={
   updated:'updated',no_resp:'WiFiLink not responding',saved:'saved',unsaved:'unsaved changes',error:'error',restarting:'restarting camera…',
   m_saved:'saved – survives a restart',m_defaults:'default values (not saved)',m_reverted:'restored saved values',m_invalid_json:'invalid JSON',
   hint_restart:'camera restart ~5 s, saved at once',hint_night:'not saved',
-  g_image:'Image',g_exposure:'Exposure',g_video:'Video',
+  g_image:'Image',g_exposure:'Exposure',g_video:'Video',g_view:'Zoom (sensor crop)',crop:'sensor crop',
+  'c_view.zoom':'Zoom','c_view.pan_x':'Pan horizontal','c_view.pan_y':'Pan vertical',
   'c_image.mirror':'Mirror (rear-view)','c_image.flip':'Flip upside down','c_image.luminance':'Brightness','c_image.contrast':'Contrast',
   'c_image.saturation':'Saturation','c_image.hue':'Hue',c_night:'Black & white (night) mode',
   'c_isp.exposure':'Max exposure','c_isp.antiFlicker':'Anti-flicker','c_isp.slowShutter':'Slow shutter in the dark',
@@ -81,7 +82,8 @@ const I18N={
   updated:'aktualizováno',no_resp:'WiFiLink neodpovídá',saved:'uloženo',unsaved:'neuložené změny',error:'chyba',restarting:'restartuji kameru…',
   m_saved:'uloženo – vydrží restart',m_defaults:'výchozí hodnoty (neuloženo)',m_reverted:'vráceno na uložené',m_invalid_json:'neplatný JSON',
   hint_restart:'restart kamery ~5 s, ukládá se hned',hint_night:'neukládá se',
-  g_image:'Obraz',g_exposure:'Expozice',g_video:'Video',
+  g_image:'Obraz',g_exposure:'Expozice',g_video:'Video',g_view:'Výřez (zoom)',crop:'výřez snímače',
+  'c_view.zoom':'Zoom','c_view.pan_x':'Posun vodorovně','c_view.pan_y':'Posun svisle',
   'c_image.mirror':'Zrcadlit (zpětné zrcátko)','c_image.flip':'Převrátit vzhůru nohama','c_image.luminance':'Jas','c_image.contrast':'Kontrast',
   'c_image.saturation':'Sytost','c_image.hue':'Odstín',c_night:'Černobílý (noční) režim',
   'c_isp.exposure':'Nejdelší expozice','c_isp.antiFlicker':'Proti blikání světel','c_isp.slowShutter':'Pomalá závěrka potmě',
@@ -123,6 +125,7 @@ async function tick(){
    [T('wifi_mod'),v.wifi_temps&&v.wifi_temps.length?v.wifi_temps.join(' / ')+' ('+T('approx')+')':null],
    [T('exposure'),s.sensor?s.sensor.exposure+' ms':null],
    [T('gain'),s.sensor?(s.sensor.again/1024).toFixed(1)+'× / '+(s.sensor.dgain/1024).toFixed(2)+'×':null],
+   [T('crop'),s.crop||null],
    [T('load'),v.load],[T('ram'),v.mem_avail?(parseInt(v.mem_avail)/1024).toFixed(0)+' MB '+T('of')+' '+(parseInt(v.mem_total)/1024).toFixed(0):null],
    [T('uptime'),v.uptime_min+' min']]);
   $('log').textContent=(s.log||[]).join('\n');
@@ -139,12 +142,14 @@ function fmt(c,v){
  if(c.key==='isp.antiFlicker')return v==='disabled'?T('o_disabled'):v+' Hz';
  if(c.type==='select')return T('o_'+v);
  if(c.key==='video0.bitrate')return (v/1000).toFixed(1)+' Mbit/s';
+ if(c.key==='view.zoom')return (+v).toFixed(2)+'×';
+ if(c.key==='view.pan_x'||c.key==='view.pan_y')return Math.round(v*100)+' %';
  return v+(c.unit?' '+c.unit:'');
 }
 const same=(c,a,b)=>c.type==='range'?Math.abs(parseFloat(a)-parseFloat(b))<1e-6:String(a)===String(b);
 function dirty(){
  if(!cam||!cam.ok)return false;
- return cam.ctrls.some(c=>{const l=cam.live[c.key];if(l==null||c.mode)return false;
+ return cam.ctrls.some(c=>{const l=cam.live[c.key];if(l==null||c.mode==='restart'||c.mode==='night')return false;
   const s=cam.saved[c.key];return s==null?!same(c,l,c.default):!same(c,l,s)});
 }
 function status(d){msg((tm(d.msg)?tm(d.msg)+' · ':'')+(d.ok?(dirty()?T('unsaved'):T('saved')):''))}
@@ -155,7 +160,8 @@ function render(d){
  for(const c of d.ctrls){
   if(c.group!==grp){grp=c.group;html+=`<h3>${T('g_'+grp)}</h3>`}
   const v=d.live[c.key]??c.default,sv=d.saved[c.key];
-  const svh=c.mode?`<div class=saved>${T('hint_'+c.mode)}</div>`:sv!=null?`<div class=saved>${T('saved')} ${fmt(c,sv)}</div>`:'';
+  const hint=c.mode==='restart'||c.mode==='night';
+  const svh=hint?`<div class=saved>${T('hint_'+c.mode)}</div>`:sv!=null?`<div class=saved>${T('saved')} ${fmt(c,sv)}</div>`:'';
   let inp;
   if(c.type==='bool')inp=`<input type=checkbox data-k="${c.key}" ${v==='true'?'checked':''}>`;
   else if(c.type==='select')inp=`<select data-k="${c.key}">`+c.options.map(o=>`<option value="${o}" ${o===v?'selected':''}>${fmt(c,o)}</option>`).join('')+'</select>';
@@ -170,7 +176,7 @@ function render(d){
    $('v_'+c.key).textContent=fmt(c,val);
    clearTimeout(timers[c.key]);
    // slider: wait until it stops moving – every change re-creates the encoder (longer for a restart)
-   const wait=c.mode==='restart'?1500:i.type==='range'?350:0;
+   const wait=c.mode==='restart'?1500:c.mode==='view'?80:i.type==='range'?350:0; // the crop does not touch the encoder
    timers[c.key]=setTimeout(()=>{if(c.mode==='restart')msg(T('restarting'));
     post('/api/camera',{[c.key]:val},c.mode==='restart')},wait);
   });

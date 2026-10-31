@@ -11,6 +11,7 @@ This is the WiFiLink equivalent of the Raspberry Pi project
 - Power on → the WiFiLink finds **any Carbit dash in range** (strongest signal wins) and starts streaming
 - Bike restarted → reconnects automatically (~20 s after the dash is up)
 - **~100 ms** glass-to-glass latency, 25 fps, 1024×592, hardware H.264 from the built-in IMX415 camera
+- **Digital zoom 1–3.6× with pan, at full sharpness** – the crop is taken from the 4K sensor before scaling
 - Mirrored image (rear-view mirror), brightness/contrast/saturation, exposure, gain limit, anti-flicker, bitrate…
 - Status & settings web page over Ethernet (EN/CS), most changes apply **live** on the dash, *Save* keeps them
 - One-command installer from a Windows PC; RubyFPV is only disabled and can be restored
@@ -54,8 +55,8 @@ Configuration before installing:
 
 - Connection state, dash network/channel/signal, frames per second, dropped frames, SoC and Wi-Fi temperature,
   current exposure and sensor gain, recent log
-- Camera: mirror/flip, brightness, contrast, saturation, hue, black & white, max exposure, anti-flicker,
-  slow shutter, sensor gain limit, WDR, bitrate, fps, I-frame interval, rate control, QP limits
+- Camera: mirror/flip, brightness, contrast, saturation, hue, black & white, **zoom and pan**, max exposure,
+  anti-flicker, slow shutter, sensor gain limit, WDR, bitrate, fps, I-frame interval, rate control, QP limits
 - Live via majestic's API; gain, WDR and mirror/flip need a camera restart (~5 s without picture, saved at once)
 - **EN / CS** language switch (English by default, remembered in the browser)
 - JSON API: `/api/status`, `/api/camera` (see `src/web.go`)
@@ -73,6 +74,10 @@ Key pieces:
 - **Low latency:** majestic encodes H.264 Main without VUI `bitstream_restriction`, so the dash decoder buffered
   ~7 frames (~400 ms). `vmoto-wfl` rewrites every SPS with `max_num_reorder_frames=0` and
   `max_dec_frame_buffering=1` → ~100 ms. The frame queue is reset on every IDR frame.
+- **Zoom:** the SoC's hardware scaler shrinks the 3840×2160 sensor picture to 1024×592. Majestic cannot choose
+  which part of the sensor goes in, so the small helper `vmoto-crop` sets the scaler's crop window
+  (`MI_VPE_SetPortCrop`) next to the running majestic; `vmoto-wfl` re-applies it whenever majestic restarts.
+  The window always has the dash's aspect ratio, which also fixes the ~3 % squeeze of the full sensor picture.
 
 Details: [docs/WIFILINK.md](docs/WIFILINK.md), protocol notes: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 The installer's messages, the WiFiLink logs and code comments outside the web server are in Czech.
@@ -95,6 +100,8 @@ Files: `install/` (installer and everything that goes to the WiFiLink), `src/` (
 
 GPL-3.0 – see [LICENSE](LICENSE). The bundled `install/8812eu.ko.xz` is built from the GPL-2.0
 [rtl88x2eu](https://github.com/OpenIPC/firmware) driver; `driver/build.sh` reproduces it.
+`install/lib/libmi_sys.so` and `libmi_vpe.so` are SigmaStar's SDK libraries as distributed by OpenIPC
+(package `sigmastar-osdrv-infinity6e`); they are not covered by the GPL and remain their owner's property.
 
 ---
 
@@ -118,8 +125,8 @@ powershell -ExecutionPolicy Bypass -File install-wifilink.ps1
 Na novém WiFiLinku se jednou zeptá na heslo roota (výchozí `12345`), nahraje SSH klíč, zkontroluje hardware
 a firmware, nainstaluje a restartuje. Pak displej motorky přepnout do režimu pro připojení mobilu a zapnout WiFiLink.
 
-Nastavení na **http://192.168.1.10/**: zrcadlení, jas, kontrast, sytost, expozice, strop zesílení, WDR,
-datový tok… – většina se projeví hned, tlačítko *Save* je zachová. Zesílení, WDR a zrcadlení restartují
+Nastavení na **http://192.168.1.10/**: zrcadlení, **zoom 1–3,6× s posunem v plné ostrosti** (výřez ze 4K
+snímače), jas, kontrast, sytost, expozice, strop zesílení, WDR, datový tok… – většina se projeví hned, tlačítko *Save* je zachová. Zesílení, WDR a zrcadlení restartují
 kameru (~5 s bez obrazu) a ukládají se hned. Stránka je anglicky, přepínačem **CS** vpravo nahoře se přepne
 do češtiny (prohlížeč si volbu pamatuje).
 

@@ -38,7 +38,7 @@ SigmaStar SSC338Q (2× Cortex-A7, 91 MB RAM for Linux), Sony IMX415, Wi-Fi RTL88
 
 ## On the WiFiLink (what `install/install.sh` does)
 - `/etc/vmoto/`: `8812eu.ko.xz`, `vmoto-wfl.xz`, `vmoto-loop.sh`, `vmoto.conf`, `restore-ruby.sh`, `VERSION`,
-  backup `majestic.yaml.ruby`, disabled `S73ruby.disabled`.
+  `vmoto-crop` + `lib/` (zoom), `view.json` (saved zoom), backup `majestic.yaml.ruby`, disabled `S73ruby.disabled`.
 - `/etc/init.d/S95vmoto`: unpacks the driver and the program into `/tmp` (RAM), `modprobe cfg80211` →
   `insmod 8812eu.ko` → majestic → `vmoto-loop.sh`.
 - `/etc/majestic.yaml` per `install/majestic-settings.txt` (`cli -s`), majestic on port 8080.
@@ -66,17 +66,33 @@ http://192.168.1.10/, listens only on the `eth0` address. English with a CS swit
   multiple (capped at 64; without the key majestic reports `analog: 128`). No visible effect of `wdr` in the log.
 - Black & white mode: `/night/on|off`, state `night_enabled` in `/metrics`, not saved.
 
-## Zoom (not possible with majestic)
-- `video0.crop` takes coordinates of the output (1024×592), shrinks the resulting video (e.g. to 512×296) and the
-  API does not accept it.
+## Zoom (scaler crop next to majestic)
+Picture path: IMX415 (3840×2160@30, raw Bayer over MIPI) → VIF → ISP (colours, exposure) → **VPE scaler** →
+H.264 encoder → majestic (only takes the finished bitstream) → RTP → `vmoto-wfl`. Majestic configures these
+hardware blocks via the SigmaStar MI SDK at start; `video0.size` only sets the scaler output.
+
+- The VPE output port has a crop window **in sensor coordinates**
+  (`/proc/mi_modules/mi_vpe/mi_vpe0`: `PortCrop 0,0,3840,2160` → `OutputW/H 1024x592`). Shrinking a smaller
+  window to 1024×592 is a zoom with the sensor's full detail, up to ~3.6× (no upscaling).
+- Majestic does not expose it (its `video0.crop` crops the *output* and shrinks the video, e.g. to 512×296).
+  The MI drivers allow a second process to talk to the running VPE ("have another bin connect" in dmesg), so
+  [src/crop/vmoto-crop.c](../src/crop/vmoto-crop.c) calls `MI_SYS_Init` + `MI_VPE_SetPortCrop(0, 0, rect)` from
+  `libmi_vpe.so` (OpenIPC package `sigmastar-osdrv-infinity6e`, libraries in `/etc/vmoto/lib`).
+  The change is immediate, without re-creating the encoder (no jerk); verified on frames from the stream.
+- The window survives majestic's encoder reloads (`/api/v1/set`) but **not a majestic restart**, which starts
+  with the full sensor. `vmoto-wfl` (`src/crop.go`) checks the driver's crop every second and re-applies the
+  wanted one (~1–2 s after majestic restarts, also at boot). While majestic starts, the port briefly reports
+  `0x0` – such states are ignored.
+- Zoom/pan from the page are live; unsaved values are kept in `/tmp/vmoto-view.json` (survive a restart of
+  `vmoto-wfl`), *Save* writes `/etc/vmoto/view.json`.
 - Sensor modes from the driver: 3840×2160@30 (full sensor), 2560×1440@60 (centre crop ~1.3×),
-  1920×1080@90 (full field of view, binning). Majestic picks the mode by `video0.fps`, but the dash takes no more
-  than ~25–30 frames/s. Majestic caps a second channel at 30 fps.
-- A real zoom would need a custom video pipeline using the scaler's input crop (instead of majestic).
+  1920×1080@90 (full field of view, binning). Majestic picks the mode by `video0.fps`; the dash takes no more than
+  ~25–30 frames/s, so the 4K@30 mode plus the scaler crop is the way to zoom.
 
 ## Development
 ```
 cd src && ./build.sh              # vmoto-wfl for ARMv7 + install/vmoto-wfl.xz (Go >= 1.18, xz)
+src/crop/build.sh                 # vmoto-crop + SigmaStar libs to install/ (needs the OpenIPC builder tree)
 go build -o vmoto-wfl-x86 . && python3 ../tools/test_fake_dash.py ./vmoto-wfl-x86   # simulated dash
 ```
 Replacing the program without rebooting the WiFiLink: unpack to `/tmp/vmoto-wfl.new`, **first** `mv` it over

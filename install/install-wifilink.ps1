@@ -27,7 +27,7 @@ param(
 $ErrorActionPreference = "Stop"
 $dir = $PSScriptRoot
 $files = "install.sh", "S95vmoto", "vmoto-loop.sh", "restore-ruby.sh", "vmoto.conf", "majestic-settings.txt",
-	"8812eu.ko.xz", "vmoto-wfl.xz"
+	"8812eu.ko.xz", "vmoto-wfl.xz", "vmoto-crop", "lib\libmi_sys.so", "lib\libmi_vpe.so"
 $textFiles = "install.sh", "S95vmoto", "vmoto-loop.sh", "restore-ruby.sh", "vmoto.conf", "majestic-settings.txt"
 
 function Step($t) { Write-Host "`n=== $t" -ForegroundColor Cyan }

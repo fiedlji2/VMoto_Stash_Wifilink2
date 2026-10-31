@@ -39,6 +39,10 @@ mkdir -p /etc/vmoto
 rm -f /etc/vmoto/*.old
 cp 8812eu.ko.xz vmoto-wfl.xz vmoto-loop.sh restore-ruby.sh vmoto.conf /etc/vmoto/
 chmod +x /etc/vmoto/vmoto-loop.sh /etc/vmoto/restore-ruby.sh
+# zoom: pomocný program pro výřez škálovače + knihovny SigmaStar (firmware RubyFPV je nemá)
+mkdir -p /etc/vmoto/lib
+cp vmoto-crop /etc/vmoto/ && chmod +x /etc/vmoto/vmoto-crop
+cp libmi_sys.so libmi_vpe.so /etc/vmoto/lib/
 cp S95vmoto /etc/init.d/S95vmoto
 chmod +x /etc/init.d/S95vmoto
 [ -f VERSION ] && cp VERSION /etc/vmoto/VERSION
