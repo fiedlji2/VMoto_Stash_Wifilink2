@@ -49,9 +49,12 @@ SigmaStar SSC338Q (2× Cortex-A7, 91 MB RAM for Linux), Sony IMX415, Wi-Fi RTL88
 allocates the whole dictionary from the header; with the default 64 MiB it reports `corrupted data` while
 majestic is running.
 
-**TX power:** `iw dev wlan0 set txpower fixed <mBm>`; already `0` gives hardware index 0 = chip minimum in
-`/proc/net/rtl88x2eu/wlan0/tx_power_idx`. The link next to the bike holds (RSSI −40 to −60 dBm). Output power
-after the module's amplifier was not measured.
+**TX power:** `iw dev wlan0 set txpower fixed <mBm>`; the driver maps the target to the chip's power index in
+0.25 dB steps (`/proc/net/rtl88x2eu/wlan0/tx_power_idx`: 5 dBm → idx 1, 10 dBm → 21, 13 dBm → 33 on path A).
+Index 0 is reached at ~4–5 dBm, so `0` = chip minimum. Adjustable on the web page (0–14 dBm, live; *Save* writes
+`TXP=` to `/etc/vmoto/vmoto.conf`, applied after every reconnect). The link next to the bike holds (RSSI −40 to
+−60 dBm). Output power after the module's amplifier was not measured. Do not raise the power with a missing or
+untuned antenna on either of the two RF ports.
 
 ## Web page (`src/web.go`, `src/web.html`)
 http://192.168.1.10/, listens only on the `eth0` address. English with a CS switch. Majestic moved to port 8080.

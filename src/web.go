@@ -80,6 +80,7 @@ func setStreamStats(st streamStats) {
 //	"restart" only via YAML + majestic restart (the API refuses the key) - saved at once
 //	"night"   /night/on|off, state from /metrics - not saved (always day after a restart)
 //	"view"    zoom = centred scaler crop window (crop.go), live, Save writes /etc/vmoto/view.json
+//	"txp"     Wi-Fi TX power (txpower.go), live via iw, Save writes TXP= to /etc/vmoto/vmoto.conf
 type camCtrl struct {
 	Key     string   `json:"key"` // section.key in majestic; the page shows a translated label for it
 	Mode    string   `json:"mode,omitempty"`
@@ -121,6 +122,8 @@ var camCtrls = []camCtrl{
 	{Key: "video0.minQp", Group: "video", Type: "range", Min: 0, Max: 51, Step: 1, Def: "12"},
 	{Key: "video0.maxQp", Group: "video", Type: "range", Min: 0, Max: 51, Step: 1, Def: "48"},
 	{Key: "video0.qpDelta", Group: "video", Type: "range", Min: -12, Max: 12, Step: 1, Def: "-7"},
+	// 14 dBm = 25 mW (EU limit for 5725-5875 MHz) even with a ~0-2 dBi antenna; below ~4-5 dBm the chip is at its minimum
+	{Key: "wifi.txpower", Mode: "txp", Group: "wifi", Type: "range", Min: 0, Max: 14, Step: 1, Unit: "dBm", Def: "0"},
 }
 
 func findCtrl(key string) *camCtrl {
@@ -198,6 +201,10 @@ func majesticLive() (map[string]string, error) {
 			out[c.Key] = strconv.FormatBool(m["night_enabled"] == "1")
 		case "view":
 			out[c.Key] = viewValue(curViewCopy(), c.Key)
+		case "txp":
+			if v := txpLive(); v != "" {
+				out[c.Key] = v
+			}
 		default:
 			sec, key, _ := strings.Cut(c.Key, ".")
 			if v, ok := cfg[sec][key]; ok {
@@ -229,7 +236,7 @@ var camMu sync.Mutex // camera changes one at a time (a majestic restart takes s
 
 // applyValues splits the values by how majestic changes them and applies them
 func applyValues(vals map[string]string) error {
-	live, restart, night := map[string]string{}, map[string]string{}, ""
+	live, restart, night, txp := map[string]string{}, map[string]string{}, "", ""
 	saved := yamlRead(*majesticYAML)
 	nv, viewChanged := curViewCopy(), false
 	for k, v := range vals {
@@ -238,6 +245,8 @@ func applyValues(vals map[string]string) error {
 		case "view":
 			nv.Zoom, _ = strconv.ParseFloat(v, 64)
 			viewChanged = true
+		case "txp":
+			txp = v
 		case "restart":
 			cur, ok := saved[k]
 			if !ok {
@@ -268,6 +277,11 @@ func applyValues(vals map[string]string) error {
 	}
 	if viewChanged {
 		if err := applyView(); err != nil {
+			return err
+		}
+	}
+	if txp != "" && txp != txpLive() {
+		if err := txpSet(txp); err != nil {
 			return err
 		}
 	}
@@ -309,7 +323,7 @@ func restartMajestic(yamlVals map[string]string) error {
 	}
 	restore := map[string]string{}
 	for _, c := range camCtrls {
-		if v, ok := before[c.Key]; ok && c.Mode != "restart" && c.Mode != "view" {
+		if v, ok := before[c.Key]; ok && c.Mode != "restart" && c.Mode != "view" && c.Mode != "txp" {
 			restore[c.Key] = v
 		}
 	}
@@ -601,6 +615,11 @@ func cameraReply(w http.ResponseWriter, msg string) {
 		if c.Mode == "view" && haveView {
 			saved[c.Key] = viewValue(sv, c.Key)
 		}
+		if c.Mode == "txp" {
+			if v := txpSaved(); v != "" {
+				saved[c.Key] = v
+			}
+		}
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "msg": msg, "ctrls": camCtrls, "live": live, "saved": saved})
 }
@@ -673,6 +692,11 @@ func webServer(s *state) {
 			if c.Mode == "view" {
 				vals[c.Key] = viewValue(sv, c.Key)
 			}
+			if c.Mode == "txp" {
+				if v := txpSaved(); v != "" {
+					vals[c.Key] = v
+				}
+			}
 		}
 		camMu.Lock()
 		defer camMu.Unlock()
@@ -695,6 +719,9 @@ func webServer(s *state) {
 		err = yamlWrite(*majesticYAML, vals)
 		if err == nil {
 			err = saveView(curViewCopy())
+		}
+		if v := live["wifi.txpower"]; err == nil && v != "" {
+			err = txpSave(v)
 		}
 		if err == nil {
 			log.Printf("[web] camera settings saved to %s and %s", *majesticYAML, *viewFile)

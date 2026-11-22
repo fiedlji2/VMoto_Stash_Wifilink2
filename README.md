@@ -55,6 +55,7 @@ Configuration before installing:
 
 - Connection state, dash network/channel/signal, frames per second, dropped frames, SoC and Wi-Fi temperature,
   current exposure and sensor gain, recent log
+- Wi-Fi TX power (0–14 dBm, live)
 - Camera: mirror/flip, brightness, contrast, saturation, hue, black & white, **zoom**, max exposure,
   anti-flicker, slow shutter, sensor gain limit, WDR, bitrate, fps, I-frame interval, rate control, QP limits
 - Live via majestic's API; gain, WDR and mirror/flip need a camera restart (~5 s without picture, saved at once)
@@ -88,8 +89,8 @@ Files: `install/` (installer and everything that goes to the WiFiLink), `src/` (
 ## Notes & legal
 
 - **Radio:** the dash uses 5 GHz channel 149 (5745 MHz). The loop sets country **US** for the P2P link and the
-  lowest TX power the chip allows (TX power index 0). The real output after the module's amplifier was not
-  measured. In the EU, 5725–5875 MHz is allowed for short-range devices up to 25 mW e.i.r.p. You are
+  lowest TX power the chip allows (TX power index 0, ~4–5 dBm); the page allows up to 14 dBm (25 mW). The real
+  output after the module's amplifier was not measured. In the EU, 5725–5875 MHz is allowed for short-range devices up to 25 mW e.i.r.p. You are
   responsible for complying with the radio rules in your country.
 - Not affiliated with Carbit, EasyConn, RunCam, OpenIPC or any motorcycle maker. Names are trademarks of their owners.
   The protocol was analysed for interoperability with the owner's own device; no vendor keys or code are included.
